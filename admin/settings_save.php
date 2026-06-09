@@ -92,8 +92,6 @@ if ($section === 'payroll') {
     set_setting($conn, 'esi_gross_limit', trim($_POST['esi_gross_limit'] ?? '21000'));
     set_setting($conn, 'leave_day_credit', trim($_POST['leave_day_credit'] ?? '1'));
     set_setting($conn, 'half_day_credit', trim($_POST['half_day_credit'] ?? '0.5'));
-    set_setting($conn, 'tds_enabled', !empty($_POST['tds_enabled']) ? '1' : '0');
-    set_setting($conn, 'tds_standard_deduction', trim($_POST['tds_standard_deduction'] ?? '75000'));
     set_setting($conn, 'overtime_hours_per_day', trim($_POST['overtime_hours_per_day'] ?? '8'));
     set_setting($conn, 'overtime_multiplier', trim($_POST['overtime_multiplier'] ?? '1.5'));
     set_setting($conn, 'require_payroll_approval', !empty($_POST['require_payroll_approval']) ? '1' : '0');
@@ -124,18 +122,35 @@ if ($section === 'payroll') {
 }
 
 if ($section === 'admins') {
+    if (!is_super_admin()) {
+        $_SESSION['flash_message'] = 'Only Head Office can manage administrator accounts.';
+        $_SESSION['flash_success'] = false;
+        header('Location: settings.php?tab=admins');
+        exit;
+    }
+
     $action = $_POST['admin_action'] ?? '';
 
     if ($action === 'add') {
         $new_user = trim($_POST['new_username'] ?? '');
         $new_pass = $_POST['new_password'] ?? '';
-        if ($new_user === '' || strlen($new_pass) < 6) {
-            $_SESSION['flash_message'] = 'Username required and password min 6 characters.';
+        $new_branch_raw = $_POST['new_branch_id'] ?? '';
+        $new_branch_id = $new_branch_raw === '0' || $new_branch_raw === '' ? null : (int) $new_branch_raw;
+        if ($new_branch_id !== null && !get_branch_by_id($conn, $new_branch_id)) {
+            $new_branch_id = null;
+        }
+        if ($new_user === '' || strlen($new_pass) < 6 || $new_branch_raw === '') {
+            $_SESSION['flash_message'] = 'Username, branch, and password (min 6 characters) are required.';
             $_SESSION['flash_success'] = false;
         } else {
             $hash = password_hash($new_pass, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare('INSERT INTO admin_users (username, password) VALUES (?, ?)');
-            $stmt->bind_param('ss', $new_user, $hash);
+            if ($new_branch_id === null) {
+                $stmt = $conn->prepare('INSERT INTO admin_users (username, password, branch_id) VALUES (?, ?, NULL)');
+                $stmt->bind_param('ss', $new_user, $hash);
+            } else {
+                $stmt = $conn->prepare('INSERT INTO admin_users (username, password, branch_id) VALUES (?, ?, ?)');
+                $stmt->bind_param('ssi', $new_user, $hash, $new_branch_id);
+            }
             if ($stmt->execute()) {
                 $_SESSION['flash_message'] = 'Admin user added.';
                 $_SESSION['flash_success'] = true;

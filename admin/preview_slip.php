@@ -16,11 +16,7 @@ if ($emp_id === '') {
     exit;
 }
 
-$stmt = $conn->prepare('SELECT * FROM employees WHERE emp_id = ?');
-$stmt->bind_param('s', $emp_id);
-$stmt->execute();
-$employee = $stmt->get_result()->fetch_assoc();
-
+$employee = require_employee_branch_access($conn, $emp_id, 'employees.php');
 if (!$employee) {
     http_response_code(404);
     echo 'Employee not found';

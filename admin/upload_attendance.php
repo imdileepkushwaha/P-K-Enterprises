@@ -7,7 +7,10 @@ if ($upload_month < 1 || $upload_month > 12) {
     $upload_month = (int) date('n');
 }
 $upload_period_label = date('F Y', mktime(0, 0, 0, $upload_month, 1, $upload_year));
-$upload_period_locked = is_payroll_period_locked($conn, $upload_year, $upload_month);
+$upload_payroll_period = get_payroll_period($conn, $upload_year, $upload_month);
+$upload_period_status = $upload_payroll_period['status'] ?? 'open';
+$upload_period_locked = $upload_period_status === 'locked';
+require_once 'includes/csrf_helper.php';
 ?>
 
 <div class="page-header page-header-row">
@@ -18,13 +21,31 @@ $upload_period_locked = is_payroll_period_locked($conn, $upload_year, $upload_mo
     </div>
     <div class="page-header-actions">
         <a href="holidays.php?month=<?php echo $upload_month; ?>&year=<?php echo $upload_year; ?>" class="btn btn-outline">Holidays</a>
-        <a href="attendance_audit.php" class="btn btn-outline">Audit log</a>
     </div>
 </div>
 
 <?php if ($upload_period_locked): ?>
-    <div class="alert alert-error alert-page">
-        <strong>Period locked.</strong> <?php echo htmlspecialchars($upload_period_label); ?> payroll is finalized. Reopen the period from the dashboard to import or edit attendance.
+    <div class="alert alert-error alert-page upload-lock-alert">
+        <div>
+            <strong>Period locked.</strong>
+            <?php echo htmlspecialchars($upload_period_label); ?> payroll is finalized, so attendance import and edits are disabled.
+        </div>
+        <form method="POST" action="payroll_period_save.php" class="upload-reopen-form">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="month" value="<?php echo $upload_month; ?>">
+            <input type="hidden" name="year" value="<?php echo $upload_year; ?>">
+            <input type="hidden" name="return_to" value="upload_attendance.php">
+            <button type="submit" name="period_action" value="reopen" class="btn btn-sm">Reopen <?php echo htmlspecialchars($upload_period_label); ?></button>
+        </form>
+    </div>
+<?php elseif (get_active_branch_id() === null): ?>
+    <div class="alert alert-page" style="background:#fff7ed;border-color:#fdba74;color:#9a3412">
+        <strong>Select a branch.</strong> Choose <strong>Indra Nagar</strong> or <strong>Alambagh</strong> from the top bar before uploading attendance.
+    </div>
+<?php elseif ($upload_period_status !== 'open'): ?>
+    <div class="alert alert-page" style="background:#eff6ff;border-color:#bfdbfe;color:#1e40af">
+        <strong>Payroll <?php echo htmlspecialchars(payroll_period_status_label($upload_period_status)); ?>.</strong>
+        You can still import attendance for <?php echo htmlspecialchars($upload_period_label); ?> until the period is locked.
     </div>
 <?php endif; ?>
 
@@ -134,7 +155,7 @@ if (isset($_SESSION['upload_message'])) {
             <p class="guide-intro"><strong>A) Monthly grid</strong> (like Attendance_Payroll_Demo.xlsx)</p>
             <ol class="guide-steps">
                 <li>Row 1: <strong>Emp ID</strong>, <strong>Name</strong>, days <strong>1–31</strong>, then totals</li>
-                <li>Each row: status per day — <strong>P</strong> Present, <strong>A</strong> Absent, <strong>HD</strong> Half day, <strong>L</strong> Leave, <strong>WO</strong> week off (skipped)</li>
+                <li>Each row: status per day — <strong>P</strong> Present, <strong>A</strong> Absent, <strong>HD</strong> Half day, <strong>L</strong> Leave, <strong>WO</strong> week off (saved as paid weekoff)</li>
             </ol>
             <p class="guide-intro"><strong>B) Simple list</strong></p>
             <ol class="guide-steps">
@@ -216,17 +237,14 @@ if (isset($_SESSION['upload_message'])) {
 
     var monthSel = document.getElementById('upload_month');
     var yearSel = document.getElementById('upload_year');
-    var periodHint = document.querySelector('.upload-period-hint strong');
-    var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-    function updatePeriodHint() {
-        if (!periodHint || !monthSel || !yearSel) return;
-        var m = parseInt(monthSel.value, 10) - 1;
-        periodHint.textContent = monthNames[m] + ' ' + yearSel.value;
+    function goToSelectedPeriod() {
+        if (!monthSel || !yearSel) return;
+        window.location = 'upload_attendance.php?month=' + encodeURIComponent(monthSel.value) + '&year=' + encodeURIComponent(yearSel.value);
     }
 
-    if (monthSel) monthSel.addEventListener('change', updatePeriodHint);
-    if (yearSel) yearSel.addEventListener('change', updatePeriodHint);
+    if (monthSel) monthSel.addEventListener('change', goToSelectedPeriod);
+    if (yearSel) yearSel.addEventListener('change', goToSelectedPeriod);
 })();
 </script>
 

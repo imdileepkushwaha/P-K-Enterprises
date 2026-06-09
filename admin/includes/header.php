@@ -1,9 +1,16 @@
 <?php
 require_once __DIR__ . '/session_auth.php';
 enforce_admin_session();
+if (!isset($conn)) {
+    require_once __DIR__ . '/../config.php';
+}
 $current_page = basename($_SERVER['PHP_SELF']);
 $employees_active = in_array($current_page, ['employees.php', 'employee_view.php'], true);
 $admin_initial = strtoupper(substr($_SESSION['admin_username'], 0, 1));
+$active_branch_label = get_branch_label($conn, get_active_branch_id());
+$branch_switch_query = $_SERVER['REQUEST_URI'] ?? 'dashboard.php';
+$all_branches = get_branches($conn);
+$pending_approvals_count = count_pending_approvals_for_branch($conn, get_active_branch_id());
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -38,33 +45,15 @@ $admin_initial = strtoupper(substr($_SESSION['admin_username'], 0, 1));
                 </a>
             </li>
             <li>
-                <a href="missing_attendance.php" class="<?php echo $current_page === 'missing_attendance.php' ? 'active' : ''; ?>">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                    <span>Missing days</span>
-                </a>
-            </li>
-            <li>
                 <a href="holidays.php" class="<?php echo $current_page === 'holidays.php' ? 'active' : ''; ?>">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>
                     <span>Holidays</span>
                 </a>
             </li>
             <li>
-                <a href="attendance_audit.php" class="<?php echo $current_page === 'attendance_audit.php' ? 'active' : ''; ?>">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                    <span>Attendance audit</span>
-                </a>
-            </li>
-            <li>
-                <a href="form16.php" class="<?php echo $current_page === 'form16.php' ? 'active' : ''; ?>">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    <span>Form 16</span>
-                </a>
-            </li>
-            <li>
-                <a href="reports.php" class="<?php echo $current_page === 'reports.php' ? 'active' : ''; ?>">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                    <span>Reports</span>
+                <a href="weekoff_roster.php" class="<?php echo $current_page === 'weekoff_roster.php' ? 'active' : ''; ?>">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><path d="M9 16h6M12 13v6"/></svg>
+                    <span>Weekoff roster</span>
                 </a>
             </li>
             <li>
@@ -77,6 +66,12 @@ $admin_initial = strtoupper(substr($_SESSION['admin_username'], 0, 1));
                 <a href="employees.php" class="<?php echo $employees_active ? 'active' : ''; ?>">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     <span>Employees</span>
+                </a>
+            </li>
+            <li>
+                <a href="approvals.php" class="<?php echo $current_page === 'approvals.php' ? 'active' : ''; ?>">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    <span>Approvals<?php if ($pending_approvals_count > 0): ?> <em class="nav-badge"><?php echo (int) $pending_approvals_count; ?></em><?php endif; ?></span>
                 </a>
             </li>
             <li>
@@ -95,11 +90,27 @@ $admin_initial = strtoupper(substr($_SESSION['admin_username'], 0, 1));
     </aside>
     <div class="main-content">
         <header class="topbar">
-            <span class="topbar-title">Payroll Management System</span>
+            <div class="topbar-left">
+                <span class="topbar-title">Payroll Management System</span>
+                <?php if (is_super_admin()): ?>
+                    <form method="GET" action="branch_switch.php" class="branch-switcher">
+                        <input type="hidden" name="redirect" value="<?php echo htmlspecialchars($branch_switch_query); ?>">
+                        <label class="sr-only" for="topbar-branch">Branch</label>
+                        <select name="branch_id" id="topbar-branch" onchange="this.form.submit()">
+                            <option value="0" <?php echo get_active_branch_id() === null ? 'selected' : ''; ?>>All Branches</option>
+                            <?php foreach ($all_branches as $branch): ?>
+                                <option value="<?php echo (int) $branch['id']; ?>" <?php echo get_active_branch_id() === (int) $branch['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($branch['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                <?php else: ?>
+                    <span class="branch-pill"><?php echo htmlspecialchars($active_branch_label); ?></span>
+                <?php endif; ?>
+            </div>
             <div class="topbar-user">
                 <div class="user-info">
                     <span class="name"><?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
-                    <span class="role">Administrator</span>
+                    <span class="role"><?php echo is_super_admin() ? 'Head Office' : htmlspecialchars($active_branch_label); ?></span>
                 </div>
                 <div class="user-avatar"><?php echo htmlspecialchars($admin_initial); ?></div>
             </div>

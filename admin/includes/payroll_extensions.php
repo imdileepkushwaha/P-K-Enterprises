@@ -11,10 +11,22 @@ function payroll_ext_table_exists($conn, $table)
 
 /* ---------- Payroll periods (approval / lock) ---------- */
 
-function get_payroll_period($conn, $year, $month)
+function payroll_context_branch_id()
 {
-    $stmt = $conn->prepare('SELECT * FROM payroll_periods WHERE period_year = ? AND period_month = ?');
-    $stmt->bind_param('ii', $year, $month);
+    if (function_exists('get_active_branch_id')) {
+        $branch_id = get_active_branch_id();
+        return $branch_id ?? 1;
+    }
+    return 1;
+}
+
+function get_payroll_period($conn, $year, $month, $branch_id = null)
+{
+    if ($branch_id === null) {
+        $branch_id = payroll_context_branch_id();
+    }
+    $stmt = $conn->prepare('SELECT * FROM payroll_periods WHERE branch_id = ? AND period_year = ? AND period_month = ?');
+    $stmt->bind_param('iii', $branch_id, $year, $month);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if ($row) {
@@ -32,9 +44,12 @@ function get_payroll_period($conn, $year, $month)
     ];
 }
 
-function upsert_payroll_period($conn, $year, $month, $status, $username = null, $notes = null)
+function upsert_payroll_period($conn, $year, $month, $status, $username = null, $notes = null, $branch_id = null)
 {
-    $existing = get_payroll_period($conn, $year, $month);
+    if ($branch_id === null) {
+        $branch_id = payroll_context_branch_id();
+    }
+    $existing = get_payroll_period($conn, $year, $month, $branch_id);
     $approved_at = null;
     $locked_at = null;
     $approved_by = $existing['approved_by'] ?? null;
@@ -56,8 +71,8 @@ function upsert_payroll_period($conn, $year, $month, $status, $username = null, 
     }
 
     $stmt = $conn->prepare("
-        INSERT INTO payroll_periods (period_year, period_month, status, approved_by, approved_at, locked_by, locked_at, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO payroll_periods (branch_id, period_year, period_month, status, approved_by, approved_at, locked_by, locked_at, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
             approved_by = VALUES(approved_by),
@@ -66,13 +81,13 @@ function upsert_payroll_period($conn, $year, $month, $status, $username = null, 
             locked_at = VALUES(locked_at),
             notes = VALUES(notes)
     ");
-    $stmt->bind_param('iissssss', $year, $month, $status, $approved_by, $approved_at, $locked_by, $locked_at, $notes);
+    $stmt->bind_param('iiissssss', $branch_id, $year, $month, $status, $approved_by, $approved_at, $locked_by, $locked_at, $notes);
     $stmt->execute();
 }
 
-function is_payroll_period_locked($conn, $year, $month)
+function is_payroll_period_locked($conn, $year, $month, $branch_id = null)
 {
-    $p = get_payroll_period($conn, $year, $month);
+    $p = get_payroll_period($conn, $year, $month, $branch_id);
     return ($p['status'] ?? 'open') === 'locked';
 }
 
@@ -95,12 +110,15 @@ function payroll_period_status_label($status)
 
 /* ---------- Holidays ---------- */
 
-function get_holidays_for_month($conn, $year, $month)
+function get_holidays_for_month($conn, $year, $month, $branch_id = null)
 {
+    if ($branch_id === null) {
+        $branch_id = payroll_context_branch_id();
+    }
     $start = sprintf('%d-%02d-01', $year, $month);
     $end = date('Y-m-t', strtotime($start));
-    $stmt = $conn->prepare('SELECT * FROM holidays WHERE calendar_date BETWEEN ? AND ? ORDER BY calendar_date');
-    $stmt->bind_param('ss', $start, $end);
+    $stmt = $conn->prepare('SELECT * FROM holidays WHERE branch_id = ? AND calendar_date BETWEEN ? AND ? ORDER BY calendar_date');
+    $stmt->bind_param('iss', $branch_id, $start, $end);
     $stmt->execute();
     $map = [];
     $r = $stmt->get_result();
@@ -146,19 +164,6 @@ function get_leave_type_credit($conn, $code, $settings)
         return (float) $types[$code]['paid_credit'];
     }
     return get_leave_day_credit($settings);
-}
-
-/* ---------- Attendance audit ---------- */
-
-function log_attendance_audit($conn, $emp_id, $date, $action, $old_status, $new_status, $old_leave_type, $new_leave_type, $overtime_hours, $changed_by)
-{
-    $stmt = $conn->prepare("
-        INSERT INTO attendance_audit (emp_id, attendance_date, action, old_status, new_status, old_leave_type, new_leave_type, overtime_hours, changed_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-    $ot = $overtime_hours !== null ? (float) $overtime_hours : 0;
-    $stmt->bind_param('sssssssds', $emp_id, $date, $action, $old_status, $new_status, $old_leave_type, $new_leave_type, $ot, $changed_by);
-    $stmt->execute();
 }
 
 /* ---------- Employee payroll profile ---------- */
@@ -228,7 +233,7 @@ function sum_adjustments_by_kind(array $adjustments)
 function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings = [])
 {
     $stmt = $conn->prepare("
-        SELECT status, leave_type, overtime_hours FROM attendance
+        SELECT attendance_date, status, leave_type, overtime_hours FROM attendance
         WHERE emp_id = ? AND YEAR(attendance_date) = ? AND MONTH(attendance_date) = ?
     ");
     $stmt->bind_param('sii', $emp_id, $year, $month);
@@ -239,11 +244,14 @@ function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings 
     $absent_days = 0;
     $half_days = 0;
     $leave_days = 0;
+    $weekoff_days = 0;
     $leave_by_type = [];
     $other_days = 0;
     $overtime_hours = 0.0;
+    $attendance_by_date = [];
 
     while ($row = $result->fetch_assoc()) {
+        $attendance_by_date[$row['attendance_date'] ?? ''] = $row['status'];
         $bucket = normalize_status_bucket($row['status']);
         $overtime_hours += (float) ($row['overtime_hours'] ?? 0);
         switch ($bucket) {
@@ -261,10 +269,17 @@ function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings 
                 $lt = $row['leave_type'] ?: 'CL';
                 $leave_by_type[$lt] = ($leave_by_type[$lt] ?? 0) + 1;
                 break;
+            case 'weekoff':
+                $weekoff_days++;
+                break;
             default:
                 $other_days++;
         }
     }
+
+    $roster_info = count_roster_weekoff_paid_credit($conn, $emp_id, $year, $month, $settings, $attendance_by_date);
+    $roster_weekoff_days = (int) ($roster_info['weekoff_days'] ?? 0);
+    $roster_weekoff_credit = (float) ($roster_info['weekoff_paid_credit'] ?? 0);
 
     $paid_leave_credit = 0.0;
     foreach ($leave_by_type as $code => $count) {
@@ -275,10 +290,13 @@ function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings 
     }
 
     $half_credit = get_half_day_credit($settings);
+    $weekoff_credit = get_weekoff_day_credit($settings);
     $paid_days = round(
         (float) $present_days
         + (float) $half_days * $half_credit
-        + $paid_leave_credit,
+        + $paid_leave_credit
+        + (float) $weekoff_days * $weekoff_credit
+        + $roster_weekoff_credit,
         2
     );
 
@@ -287,11 +305,14 @@ function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings 
         'absent_days' => $absent_days,
         'half_days' => $half_days,
         'leave_days' => $leave_days,
+        'weekoff_days' => $weekoff_days,
+        'roster_weekoff_days' => $roster_weekoff_days,
         'leave_by_type' => $leave_by_type,
         'other_days' => $other_days,
-        'total_records' => $present_days + $absent_days + $half_days + $leave_days + $other_days,
+        'total_records' => $present_days + $absent_days + $half_days + $leave_days + $weekoff_days + $other_days,
         'overtime_hours' => round($overtime_hours, 2),
         'paid_days' => $paid_days,
+        'roster_weekoff_dates' => $roster_info['roster_dates'] ?? [],
     ];
 }
 
@@ -310,160 +331,6 @@ function calculate_overtime_pay($employee, $stats, $settings)
     $multiplier = max(1, (float) ($settings['overtime_multiplier'] ?? 1.5));
     $hourly = $daily / $hours_per_day;
     return round($hours * $hourly * $multiplier, 2);
-}
-
-/* ---------- Missing attendance report ---------- */
-
-function get_missing_attendance_report($conn, $year, $month, $settings)
-{
-    $working_days = get_working_days_per_month($settings);
-    $holidays = get_holiday_dates_set($conn, $year, $month);
-    $days_in_month = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
-
-    $employees = $conn->query('SELECT * FROM employees WHERE is_active = 1 ORDER BY name');
-    $rows = [];
-
-    while ($emp = $employees->fetch_assoc()) {
-        $stats = get_attendance_stats_extended($conn, $emp['emp_id'], $year, $month, $settings);
-        $recorded = (int) $stats['total_records'];
-        $expected = max(0, $working_days - count($holidays));
-        $missing = max(0, $expected - $recorded);
-        $rows[] = [
-            'employee' => $emp,
-            'stats' => $stats,
-            'recorded' => $recorded,
-            'expected' => $expected,
-            'missing' => $missing,
-            'complete' => $missing === 0 && $recorded > 0,
-        ];
-    }
-
-    return $rows;
-}
-
-/* ---------- TDS engine (simplified FY) ---------- */
-
-function get_financial_year_for_month($year, $month)
-{
-    if ($month >= 4) {
-        return $year . '-' . substr((string) ($year + 1), -2);
-    }
-    return ($year - 1) . '-' . substr((string) $year, -2);
-}
-
-function get_tds_slabs_old_regime()
-{
-    return [
-        ['upto' => 250000, 'rate' => 0],
-        ['upto' => 500000, 'rate' => 5],
-        ['upto' => 1000000, 'rate' => 20],
-        ['upto' => PHP_INT_MAX, 'rate' => 30],
-    ];
-}
-
-function get_tds_slabs_new_regime()
-{
-    return [
-        ['upto' => 300000, 'rate' => 0],
-        ['upto' => 600000, 'rate' => 5],
-        ['upto' => 900000, 'rate' => 10],
-        ['upto' => 1200000, 'rate' => 15],
-        ['upto' => 1500000, 'rate' => 20],
-        ['upto' => PHP_INT_MAX, 'rate' => 30],
-    ];
-}
-
-function calculate_annual_tax_from_slabs($taxable_income, array $slabs)
-{
-    $taxable_income = max(0, $taxable_income);
-    $prev = 0;
-    $tax = 0.0;
-    foreach ($slabs as $band) {
-        $limit = (float) $band['upto'];
-        $rate = (float) $band['rate'];
-        if ($taxable_income <= $prev) {
-            break;
-        }
-        $chunk = min($taxable_income, $limit) - $prev;
-        if ($chunk > 0) {
-            $tax += $chunk * $rate / 100;
-        }
-        $prev = $limit;
-    }
-    if ($taxable_income > 5000000) {
-        $tax *= 1.10;
-    } elseif ($taxable_income > 1000000) {
-        $tax *= 1.04;
-    }
-    return round($tax, 2);
-}
-
-function get_employee_annual_taxable_income($employee, $profile, $settings, $monthly_gross)
-{
-    $annual_gross = $monthly_gross * 12;
-    $std_ded = (float) ($settings['tds_standard_deduction'] ?? 75000);
-    $sec80c = (float) ($profile['section_80c'] ?? 0);
-    $other = (float) ($profile['other_exemptions'] ?? 0);
-    $taxable = max(0, $annual_gross - $std_ded - min($sec80c, 150000) - $other);
-    return $taxable;
-}
-
-function calculate_monthly_tds($conn, $employee, $profile, $settings, $monthly_gross, $year, $month)
-{
-    if (!((int) ($settings['tds_enabled'] ?? 0))) {
-        return 0.0;
-    }
-    $regime = $profile['tax_regime'] ?? 'new';
-    $slabs = $regime === 'old' ? get_tds_slabs_old_regime() : get_tds_slabs_new_regime();
-    $taxable = get_employee_annual_taxable_income($employee, $profile, $settings, $monthly_gross);
-    $annual_tax = calculate_annual_tax_from_slabs($taxable, $slabs);
-
-    $fy_start_year = $month >= 4 ? $year : $year - 1;
-    $fy_start = sprintf('%d-04-01', $fy_start_year);
-    $emp_id = $employee['emp_id'];
-
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(tds_amount), 0) AS paid
-        FROM tds_ledger
-        WHERE emp_id = ? AND deducted_on >= ?
-    ");
-    $stmt->bind_param('ss', $emp_id, $fy_start);
-    $stmt->execute();
-    $paid_ytd = (float) ($stmt->get_result()->fetch_assoc()['paid'] ?? 0);
-
-    $months_left = 12;
-    if ($month >= 4) {
-        $months_left = 12 - ($month - 4);
-    } else {
-        $months_left = 4 - $month;
-    }
-    $months_left = max(1, $months_left);
-    $remaining = max(0, $annual_tax - $paid_ytd);
-    return round($remaining / $months_left, 2);
-}
-
-function record_tds_ledger($conn, $emp_id, $year, $month, $amount)
-{
-    $date = sprintf('%d-%02d-01', $year, $month);
-    $stmt = $conn->prepare("
-        INSERT INTO tds_ledger (emp_id, period_year, period_month, deducted_on, tds_amount)
-        VALUES (?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE tds_amount = VALUES(tds_amount)
-    ");
-    $stmt->bind_param('siisd', $emp_id, $year, $month, $date, $amount);
-    $stmt->execute();
-}
-
-function get_tds_ytd_for_fy($conn, $emp_id, $fy_label)
-{
-    $parts = explode('-', $fy_label);
-    $start_year = (int) $parts[0];
-    $fy_start = sprintf('%d-04-01', $start_year);
-    $fy_end = sprintf('%d-03-31', $start_year + 1);
-    $stmt = $conn->prepare('SELECT COALESCE(SUM(tds_amount), 0) AS total FROM tds_ledger WHERE emp_id = ? AND deducted_on BETWEEN ? AND ?');
-    $stmt->bind_param('sss', $emp_id, $fy_start, $fy_end);
-    $stmt->execute();
-    return (float) ($stmt->get_result()->fetch_assoc()['total'] ?? 0);
 }
 
 /* ---------- Full salary with extensions ---------- */
@@ -491,6 +358,8 @@ function calculate_employee_salary_full($conn, $employee, $year, $month, $settin
         'absent_days' => (int) $stats['absent_days'],
         'half_days' => (int) $stats['half_days'],
         'leave_days' => (int) $stats['leave_days'],
+        'weekoff_days' => (int) ($stats['weekoff_days'] ?? 0),
+        'roster_weekoff_days' => (int) ($stats['roster_weekoff_days'] ?? 0),
         'leave_by_type' => $stats['leave_by_type'],
         'paid_days' => $paid_days,
         'overtime_hours' => $stats['overtime_hours'],
@@ -536,18 +405,6 @@ function calculate_employee_salary_full($conn, $employee, $year, $month, $settin
             'monthly' => 0, 'period' => round($adj_sums['deduction'], 2),
         ];
         $breakdown['deductions_period_total'] += round($adj_sums['deduction'], 2);
-    }
-
-    $monthly_gross = (float) ($employee['base_salary'] ?? 0);
-    $tds = calculate_monthly_tds($conn, $employee, $profile ?: [], $effective_settings, $monthly_gross, $year, $month);
-    if ($tds > 0) {
-        $breakdown['deductions'][] = [
-            'id' => 'tds', 'label' => 'TDS (Income Tax)', 'hint' => 'Monthly withholding', 'percent_label' => 'TDS',
-            'monthly' => 0, 'period' => $tds,
-        ];
-        $breakdown['deductions_period_total'] += $tds;
-        $salary['tds_amount'] = $tds;
-        record_tds_ledger($conn, $employee['emp_id'], $year, $month, $tds);
     }
 
     $breakdown['earnings_period_total'] = round($breakdown['earnings_period_total'], 2);

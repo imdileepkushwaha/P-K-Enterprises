@@ -8,9 +8,22 @@ require_once 'includes/csrf_helper.php';
 
 $settings = get_all_settings($conn);
 $smtp_ready = is_smtp_configured($settings);
-$emp_count = $conn->query("SELECT COUNT(*) as count FROM employees")->fetch_assoc()['count'];
-$att_count = $conn->query("SELECT COUNT(*) as count FROM attendance")->fetch_assoc()['count'];
-$present_count = $conn->query("SELECT COUNT(*) as count FROM attendance WHERE LOWER(status) = 'present'")->fetch_assoc()['count'];
+$branch_filter = branch_employees_sql('e');
+$emp_count_stmt = $conn->prepare('SELECT COUNT(*) as count FROM employees e WHERE 1=1' . $branch_filter['sql']);
+bind_branch_stmt_params($emp_count_stmt, $branch_filter['types'], $branch_filter['params']);
+$emp_count_stmt->execute();
+$emp_count = (int) $emp_count_stmt->get_result()->fetch_assoc()['count'];
+
+$att_count_stmt = $conn->prepare('SELECT COUNT(*) as count FROM attendance a INNER JOIN employees e ON e.emp_id = a.emp_id WHERE 1=1' . $branch_filter['sql']);
+bind_branch_stmt_params($att_count_stmt, $branch_filter['types'], $branch_filter['params']);
+$att_count_stmt->execute();
+$att_count = (int) $att_count_stmt->get_result()->fetch_assoc()['count'];
+
+$present_count_stmt = $conn->prepare("SELECT COUNT(*) as count FROM attendance a INNER JOIN employees e ON e.emp_id = a.emp_id WHERE LOWER(a.status) = 'present'" . $branch_filter['sql']);
+bind_branch_stmt_params($present_count_stmt, $branch_filter['types'], $branch_filter['params']);
+$present_count_stmt->execute();
+$present_count = (int) $present_count_stmt->get_result()->fetch_assoc()['count'];
+$active_branch_label = get_branch_label($conn, get_active_branch_id());
 
 $payroll_month = (int) ($_GET['month'] ?? date('n'));
 $payroll_year = (int) ($_GET['year'] ?? date('Y'));
@@ -28,7 +41,11 @@ $total_net_payroll = 0.0;
 $employees_with_attendance = 0;
 $active_employee_count = 0;
 
-$employees_result = $conn->query('SELECT * FROM employees ORDER BY is_active DESC, name ASC');
+$employees_sql = 'SELECT e.* FROM employees e WHERE 1=1' . $branch_filter['sql'] . ' ORDER BY e.is_active DESC, e.name ASC';
+$employees_stmt = $conn->prepare($employees_sql);
+bind_branch_stmt_params($employees_stmt, $branch_filter['types'], $branch_filter['params']);
+$employees_stmt->execute();
+$employees_result = $employees_stmt->get_result();
 while ($emp = $employees_result->fetch_assoc()) {
     $is_active = employee_is_active($emp);
     if ($is_active) {
@@ -95,7 +112,7 @@ $period_locked = $period_status === 'locked';
     <div class="page-header-main">
         <p class="page-eyebrow">Overview</p>
         <h2>Dashboard</h2>
-        <p>Payroll for <strong><?php echo htmlspecialchars($payroll_period_label); ?></strong> · <?php echo htmlspecialchars($company_name); ?></p>
+        <p>Payroll for <strong><?php echo htmlspecialchars($payroll_period_label); ?></strong> · <?php echo htmlspecialchars($company_name); ?> · <strong><?php echo htmlspecialchars($active_branch_label); ?></strong></p>
     </div>
     <div class="page-header-actions">
         <a href="employees.php" class="btn btn-outline">Employees</a>
@@ -304,7 +321,10 @@ $period_locked = $period_status === 'locked';
     </div>
     <div class="dashboard-aside-card">
         <h4>Payroll period</h4>
-        <p class="dashboard-aside-desc">Approve or lock this month before sending slips.</p>
+        <p class="dashboard-aside-desc">Approve or lock this month before sending slips<?php echo get_active_branch_id() === null ? ' for a branch' : ' for ' . htmlspecialchars($active_branch_label); ?>.</p>
+        <?php if (get_active_branch_id() === null): ?>
+            <p class="form-hint">Select <strong>Indra Nagar</strong> or <strong>Alambagh</strong> from the top bar to manage period status.</p>
+        <?php else: ?>
         <form method="POST" action="payroll_period_save.php" class="dashboard-period-actions">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="month" value="<?php echo $payroll_month; ?>">
@@ -319,6 +339,7 @@ $period_locked = $period_status === 'locked';
                 <button type="submit" name="period_action" value="reopen" class="btn btn-outline btn-sm btn-block">Reopen period</button>
             <?php endif; ?>
         </form>
+        <?php endif; ?>
     </div>
 </aside>
 </div>

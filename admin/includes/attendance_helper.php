@@ -14,6 +14,9 @@ function normalize_attendance_status_code($status)
     if (in_array($s, ['half day', 'half-day', 'halfday', 'hd', 'h'], true)) {
         return 'HD';
     }
+    if (in_array($s, ['week off', 'weekoff', 'week-off', 'wo', 'w/o', 'off'], true)) {
+        return 'WO';
+    }
     if (str_starts_with($s, 'half')) {
         return 'HD';
     }
@@ -35,6 +38,7 @@ function attendance_code_css_class($code)
         'P' => 'att-code-p',
         'A' => 'att-code-a',
         'HD' => 'att-code-hd',
+        'WO' => 'att-code-wo',
         default => 'att-code-unknown',
     };
 }
@@ -45,6 +49,7 @@ function attendance_code_label($code)
         'P' => 'Present',
         'A' => 'Absent',
         'HD' => 'Half day',
+        'WO' => 'Week off',
         default => 'Other',
     };
 }
@@ -63,7 +68,7 @@ function build_attendance_date_map($result)
 
 function count_attendance_codes(array $date_map)
 {
-    $counts = ['P' => 0, 'A' => 0, 'HD' => 0, 'other' => 0];
+    $counts = ['P' => 0, 'A' => 0, 'HD' => 0, 'WO' => 0, 'other' => 0];
     foreach ($date_map as $status) {
         $code = normalize_attendance_status_code($status);
         if (isset($counts[$code])) {
@@ -88,7 +93,7 @@ function get_adjacent_period($month, $year, $delta_months)
     return [(int) date('n', $ts), (int) date('Y', $ts)];
 }
 
-function render_attendance_calendar($year, $month, array $attendance_by_date, $today_day = 0, array $holidays_map = [], $editable = false, array $attendance_detail = [])
+function render_attendance_calendar($year, $month, array $attendance_by_date, $today_day = 0, array $holidays_map = [], $editable = false, array $attendance_detail = [], array $weekoff_dates = [])
 {
     $days_in_month = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
     $calendar_start_dow = (int) date('w', mktime(0, 0, 0, $month, 1, $year));
@@ -113,6 +118,7 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                 $code = $raw_status !== null ? normalize_attendance_status_code($raw_status) : '';
                 $has_record = $raw_status !== null;
                 $is_holiday = isset($holidays_map[$date_key]);
+                $is_roster_wo = in_array($date_key, $weekoff_dates, true);
                 $is_today = ($today_day > 0 && $day === $today_day);
                 $cell_class = 'att-cal-cell';
                 if ($editable) {
@@ -124,12 +130,17 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                 if ($is_holiday) {
                     $cell_class .= ' att-cal-holiday';
                 }
+                if ($is_roster_wo && !$has_record) {
+                    $cell_class .= ' att-cal-roster-wo';
+                }
                 if (!$has_record) {
                     $cell_class .= ' att-cal-no-record';
                 }
                 $title = $has_record
                     ? $date_key . ' — ' . attendance_code_label($code) . ' (' . $raw_status . ')'
-                    : ($is_holiday ? $date_key . ' — ' . ($holidays_map[$date_key]['name'] ?? 'Holiday') : $date_key . ' — No record');
+                    : ($is_holiday
+                        ? $date_key . ' — ' . ($holidays_map[$date_key]['name'] ?? 'Holiday')
+                        : ($is_roster_wo ? $date_key . ' — Week off (roster)' : $date_key . ' — No record'));
                 $data_attrs = '';
                 if ($editable) {
                     $detail = $attendance_detail[$date_key] ?? null;
@@ -148,6 +159,8 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                         <span class="att-cal-code att-cal-holiday-code">HO</span>
                     <?php elseif ($has_record && $code !== ''): ?>
                         <span class="att-cal-code <?php echo attendance_code_css_class($code); ?>"><?php echo htmlspecialchars($code); ?></span>
+                    <?php elseif ($is_roster_wo): ?>
+                        <span class="att-cal-code att-code-wo">WO</span>
                     <?php elseif ($has_record): ?>
                         <span class="att-cal-code att-code-unknown" title="<?php echo htmlspecialchars($raw_status); ?>">?</span>
                     <?php else: ?>

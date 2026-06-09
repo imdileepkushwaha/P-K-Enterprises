@@ -17,6 +17,8 @@ $month = (int) ($_POST['month'] ?? date('n'));
 $year = (int) ($_POST['year'] ?? date('Y'));
 $redirect = 'employee_view.php?emp_id=' . urlencode($emp_id) . '&month=' . $month . '&year=' . $year;
 
+require_employee_branch_access($conn, $emp_id, $redirect);
+
 if (is_payroll_period_locked($conn, $year, $month)) {
     $_SESSION['flash_message'] = 'Period is locked.';
     $_SESSION['flash_success'] = false;

@@ -15,6 +15,7 @@ require_csrf_or_redirect('employees.php');
 $action = $_POST['action'] ?? '';
 
 if ($action === 'add') {
+    $write_branch_id = require_branch_context_for_write();
     $emp_id = trim($_POST['emp_id'] ?? '');
     $name = trim($_POST['name'] ?? '');
     $email = trim($_POST['email'] ?? '');
@@ -37,20 +38,24 @@ if ($action === 'add') {
 
     if ($joined_date === null) {
         $stmt = $conn->prepare("
-            INSERT INTO employees (emp_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ");
-        $stmt->bind_param('ssssssdssss', $emp_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name);
+        $stmt->bind_param('sisssssdssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name);
     } else {
         $stmt = $conn->prepare("
-            INSERT INTO employees (emp_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->bind_param('ssssssdsssss', $emp_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $joined_date);
+        $stmt->bind_param('sisssssdsssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $joined_date);
     }
 
     if ($stmt->execute()) {
-        $_SESSION['flash_message'] = 'Employee added successfully.';
+        require_once 'includes/settings_helper.php';
+        $settings = get_all_settings($conn);
+        $default_portal_password = $settings['default_employee_portal_password'] ?? 'Emp@123';
+        set_employee_portal_password($conn, $emp_id, $default_portal_password);
+        $_SESSION['flash_message'] = 'Employee added successfully. Portal password: ' . $default_portal_password;
         $_SESSION['flash_success'] = true;
     } else {
         $_SESSION['flash_message'] = 'Could not add employee. ID may already exist.';
@@ -62,6 +67,7 @@ if ($action === 'add') {
 
 if ($action === 'update') {
     $emp_id = trim($_POST['emp_id'] ?? '');
+    require_employee_branch_access($conn, $emp_id);
     $name = trim($_POST['name'] ?? '');
     $email = trim($_POST['email'] ?? '');
     $phone = trim($_POST['phone'] ?? '');

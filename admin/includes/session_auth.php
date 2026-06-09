@@ -3,6 +3,10 @@
 /** Inactivity timeout: 30 minutes */
 define('ADMIN_SESSION_TIMEOUT', 30 * 60);
 
+if (!defined('BRANCH_FILTER_ALL')) {
+    define('BRANCH_FILTER_ALL', 0);
+}
+
 function init_admin_session()
 {
     if (session_status() !== PHP_SESSION_NONE) {
@@ -43,10 +47,12 @@ function expire_admin_session($message = null)
     $_SESSION['login_error'] = $msg;
 }
 
-function set_admin_session_on_login($username)
+function set_admin_session_on_login($username, $branch_id = null, $active_branch_id = null)
 {
     $_SESSION['admin_logged_in'] = true;
     $_SESSION['admin_username'] = $username;
+    $_SESSION['admin_branch_id'] = $branch_id;
+    $_SESSION['admin_active_branch_id'] = $active_branch_id ?? $branch_id ?? BRANCH_FILTER_ALL;
     $_SESSION['admin_last_activity'] = time();
 }
 

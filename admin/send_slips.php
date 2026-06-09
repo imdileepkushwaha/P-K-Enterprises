@@ -79,7 +79,12 @@ if (!is_smtp_configured($settings) || empty($settings['smtp_password'])) {
 }
 
 $slip_status_map = get_slip_send_status_for_period($conn, $year, $month);
-$employees = $conn->query('SELECT * FROM employees ORDER BY name');
+$branch_filter = branch_employees_sql('');
+$emp_sql = 'SELECT * FROM employees WHERE 1=1' . $branch_filter['sql'] . ' ORDER BY name';
+$emp_stmt = $conn->prepare($emp_sql);
+bind_branch_stmt_params($emp_stmt, $branch_filter['types'], $branch_filter['params']);
+$emp_stmt->execute();
+$employees = $emp_stmt->get_result();
 $to_send = [];
 
 while ($emp = $employees->fetch_assoc()) {

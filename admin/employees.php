@@ -12,6 +12,12 @@ $offset = ($page - 1) * $per_page;
 $where_sql = '1=1';
 $types = '';
 $params = [];
+$branch_filter = branch_employees_sql('');
+if ($branch_filter['sql'] !== '') {
+    $where_sql .= $branch_filter['sql'];
+    $types .= $branch_filter['types'];
+    $params = array_merge($params, $branch_filter['params']);
+}
 if ($filter_status === 'active') {
     $where_sql .= ' AND is_active = 1';
 } elseif ($filter_status === 'inactive') {
@@ -46,11 +52,65 @@ $employees = $list_stmt->get_result();
 
 $dept_list = $conn->query("SELECT DISTINCT department FROM employees WHERE department IS NOT NULL AND department != '' ORDER BY department");
 
-$total_all = (int) $conn->query("SELECT COUNT(*) AS c FROM employees")->fetch_assoc()['c'];
-$active_count = (int) $conn->query("SELECT COUNT(*) AS c FROM employees WHERE is_active = 1")->fetch_assoc()['c'];
+$stats_sql_base = 'SELECT COUNT(*) AS c FROM employees WHERE 1=1' . $branch_filter['sql'];
+$stats_types = $branch_filter['types'];
+$stats_params = $branch_filter['params'];
+
+$total_stmt = $conn->prepare($stats_sql_base);
+bind_branch_stmt_params($total_stmt, $stats_types, $stats_params);
+$total_stmt->execute();
+$total_all = (int) $total_stmt->get_result()->fetch_assoc()['c'];
+
+$active_stmt = $conn->prepare($stats_sql_base . ' AND is_active = 1');
+bind_branch_stmt_params($active_stmt, $stats_types, $stats_params);
+$active_stmt->execute();
+$active_count = (int) $active_stmt->get_result()->fetch_assoc()['c'];
 $inactive_count = $total_all - $active_count;
-$with_email_active = (int) $conn->query("SELECT COUNT(*) AS c FROM employees WHERE is_active = 1 AND email IS NOT NULL AND email != ''")->fetch_assoc()['c'];
+
+$email_stmt = $conn->prepare($stats_sql_base . " AND is_active = 1 AND email IS NOT NULL AND email != ''");
+bind_branch_stmt_params($email_stmt, $stats_types, $stats_params);
+$email_stmt->execute();
+$with_email_active = (int) $email_stmt->get_result()->fetch_assoc()['c'];
+$active_branch_label = get_branch_label($conn, get_active_branch_id());
 $listed = $employees ? $employees->num_rows : 0;
+$range_start = $filtered_total > 0 ? $offset + 1 : 0;
+$range_end = $filtered_total > 0 ? $offset + $listed : 0;
+
+function emp_list_url($page, $filter_status, $filter_dept)
+{
+    $query = ['page' => $page];
+    if ($filter_status !== 'all') {
+        $query['status'] = $filter_status;
+    }
+    if ($filter_dept !== '') {
+        $query['dept'] = $filter_dept;
+    }
+    return '?' . http_build_query($query);
+}
+
+function emp_pagination_pages($page, $total_pages)
+{
+    if ($total_pages <= 1) {
+        return [];
+    }
+    if ($total_pages <= 7) {
+        return range(1, $total_pages);
+    }
+
+    $pages = [1];
+    if ($page > 3) {
+        $pages[] = null;
+    }
+    for ($i = max(2, $page - 1); $i <= min($total_pages - 1, $page + 1); $i++) {
+        $pages[] = $i;
+    }
+    if ($page < $total_pages - 2) {
+        $pages[] = null;
+    }
+    $pages[] = $total_pages;
+
+    return $pages;
+}
 
 require_once 'includes/csrf_helper.php';
 ?>
@@ -58,7 +118,7 @@ require_once 'includes/csrf_helper.php';
     <div class="page-header-main">
         <p class="page-eyebrow">People</p>
         <h2>Employees</h2>
-        <p>Manage team profiles, salaries, and view attendance history.</p>
+        <p>Manage team profiles, salaries, and view attendance history for <strong><?php echo htmlspecialchars($active_branch_label); ?></strong>.</p>
     </div>
     <div class="page-header-actions">
         <button type="button" class="btn btn-header" onclick="document.getElementById('addEmployeeModal').showModal()">
@@ -152,6 +212,7 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                     <thead>
                         <tr>
                             <th>Employee</th>
+                            <th>Branch</th>
                             <th>Role</th>
                             <th>Salary</th>
                             <th>Contact</th>
@@ -164,9 +225,11 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                             $initial = strtoupper(substr($emp['name'], 0, 1));
                             $has_email = !empty($emp['email']);
                             $is_active = employee_is_active($emp);
+                            $branch_name = get_branch_label($conn, (int) ($emp['branch_id'] ?? 0));
                             $search_blob = strtolower(implode(' ', [
                                 $emp['emp_id'],
                                 $emp['name'],
+                                $branch_name,
                                 $emp['email'] ?? '',
                                 $emp['phone'] ?? '',
                                 $emp['department'] ?? '',
@@ -201,6 +264,7 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                                         </div>
                                     </div>
                                 </td>
+                                <td><span class="branch-pill branch-pill-table"><?php echo htmlspecialchars($branch_name); ?></span></td>
                                 <td>
                                     <span class="dept-badge"><?php echo htmlspecialchars($emp['department'] ?: 'General'); ?></span>
                                     <?php if (!empty($emp['designation'])): ?>
@@ -261,11 +325,50 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                 </table>
             </div>
             <?php if ($total_pages > 1): ?>
-            <nav class="pagination-bar" aria-label="Employee pages">
-                <?php for ($p = 1; $p <= $total_pages; $p++): ?>
-                    <a href="?page=<?php echo $p; ?>&status=<?php echo urlencode($filter_status); ?>&dept=<?php echo urlencode($filter_dept); ?>" class="pagination-link <?php echo $p === $page ? 'active' : ''; ?>"><?php echo $p; ?></a>
-                <?php endfor; ?>
-            </nav>
+            <div class="emp-pagination" id="empPagination">
+                <p class="emp-pagination-info">
+                    Showing <strong><?php echo $range_start; ?>–<?php echo $range_end; ?></strong>
+                    of <strong><?php echo $filtered_total; ?></strong> employees
+                    <span class="emp-pagination-page">· Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
+                </p>
+                <nav class="emp-pagination-nav" aria-label="Employee pages">
+                    <?php if ($page > 1): ?>
+                        <a href="<?php echo htmlspecialchars(emp_list_url($page - 1, $filter_status, $filter_dept)); ?>" class="emp-page-btn" aria-label="Previous page">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                            <span>Prev</span>
+                        </a>
+                    <?php else: ?>
+                        <span class="emp-page-btn is-disabled" aria-disabled="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                            <span>Prev</span>
+                        </span>
+                    <?php endif; ?>
+
+                    <div class="emp-page-links">
+                        <?php foreach (emp_pagination_pages($page, $total_pages) as $p): ?>
+                            <?php if ($p === null): ?>
+                                <span class="emp-page-ellipsis" aria-hidden="true">…</span>
+                            <?php elseif ($p === $page): ?>
+                                <span class="emp-page-link is-active" aria-current="page"><?php echo $p; ?></span>
+                            <?php else: ?>
+                                <a href="<?php echo htmlspecialchars(emp_list_url($p, $filter_status, $filter_dept)); ?>" class="emp-page-link"><?php echo $p; ?></a>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <?php if ($page < $total_pages): ?>
+                        <a href="<?php echo htmlspecialchars(emp_list_url($page + 1, $filter_status, $filter_dept)); ?>" class="emp-page-btn" aria-label="Next page">
+                            <span>Next</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                        </a>
+                    <?php else: ?>
+                        <span class="emp-page-btn is-disabled" aria-disabled="true">
+                            <span>Next</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                        </span>
+                    <?php endif; ?>
+                </nav>
+            </div>
             <?php endif; ?>
             <div class="empty-state compact" id="empSearchEmpty" hidden>
                 <h4>No matches found</h4>
@@ -527,6 +630,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var noResults = document.getElementById('empSearchEmpty');
     var clearBtn = document.getElementById('empSearchClear');
     var tableWrap = document.querySelector('.employees-panel .table-wrap');
+    var pagination = document.getElementById('empPagination');
     var totalRows = rows.length;
 
     function applyFilter() {
@@ -548,6 +652,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (clearBtn) clearBtn.hidden = q === '';
         if (noResults) noResults.hidden = visible > 0 || totalRows === 0;
         if (tableWrap) tableWrap.hidden = visible === 0 && totalRows > 0;
+        if (pagination) pagination.hidden = q !== '';
     }
 
     searchInput.addEventListener('input', applyFilter);

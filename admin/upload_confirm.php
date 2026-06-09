@@ -30,7 +30,8 @@ if (is_payroll_period_locked($conn, $upload_year, $upload_month)) {
     exit;
 }
 
-$result = process_attendance_upload($conn, $pending['rows'], (int) $pending['year'], (int) $pending['month'], false);
+$upload_branch_id = require_branch_context_for_write();
+$result = process_attendance_upload($conn, $pending['rows'], (int) $pending['year'], (int) $pending['month'], false, $upload_branch_id);
 unset($_SESSION['upload_pending']);
 
 $upload_month = (int) $pending['month'];

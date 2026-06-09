@@ -13,16 +13,20 @@ if ($year < 2000 || $year > 2100) {
 }
 
 $period_label = get_period_label($year, $month);
+$active_branch_label = get_branch_label($conn, get_active_branch_id());
+$branch_filter = branch_employees_sql('e');
 
 $stmt = $conn->prepare("
-    SELECT l.*, e.name
+    SELECT l.*, e.name, e.branch_id
     FROM salary_slip_logs l
     LEFT JOIN employees e ON e.emp_id = l.emp_id
-    WHERE l.period_month = ? AND l.period_year = ?
+    WHERE l.period_month = ? AND l.period_year = ?" . $branch_filter['sql'] . "
     ORDER BY l.sent_at DESC
     LIMIT 500
 ");
-$stmt->bind_param('ii', $month, $year);
+$types = 'ii' . $branch_filter['types'];
+$params = array_merge([$month, $year], $branch_filter['params']);
+$stmt->bind_param($types, ...$params);
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -51,7 +55,7 @@ $employee_count = count($unique_employees);
         <div class="page-header-main">
             <p class="page-eyebrow">Payroll</p>
             <h2>Salary slip history</h2>
-            <p>Email delivery log for <strong><?php echo htmlspecialchars($period_label); ?></strong> — sent and failed attempts.</p>
+            <p>Email delivery log for <strong><?php echo htmlspecialchars($period_label); ?></strong> · <strong><?php echo htmlspecialchars($active_branch_label); ?></strong></p>
         </div>
         <div class="page-header-actions">
             <a href="dashboard.php?month=<?php echo $month; ?>&year=<?php echo $year; ?>" class="btn btn-outline">Dashboard</a>

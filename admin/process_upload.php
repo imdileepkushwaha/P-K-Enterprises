@@ -57,8 +57,10 @@ if (isset($parsed['error'])) {
     exit;
 }
 
+$upload_branch_id = require_branch_context_for_write();
+
 $preview_only = !empty($_POST['preview_only']);
-$result = process_attendance_upload($conn, $parsed['rows'], $upload_year, $upload_month, $preview_only);
+$result = process_attendance_upload($conn, $parsed['rows'], $upload_year, $upload_month, $preview_only, $upload_branch_id);
 $period_label = date('F Y', mktime(0, 0, 0, $upload_month, 1, $upload_year));
 $format_note = ($result['format'] ?? '') === 'wide' ? ' (grid)' : '';
 

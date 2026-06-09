@@ -20,17 +20,7 @@ if ($emp_id === '') {
     exit;
 }
 
-$check = $conn->prepare('SELECT name FROM employees WHERE emp_id = ?');
-$check->bind_param('s', $emp_id);
-$check->execute();
-$row = $check->get_result()->fetch_assoc();
-
-if (!$row) {
-    $_SESSION['flash_message'] = 'Employee not found.';
-    $_SESSION['flash_success'] = false;
-    header('Location: employees.php');
-    exit;
-}
+$row = require_employee_branch_access($conn, $emp_id);
 
 $name = $row['name'];
 

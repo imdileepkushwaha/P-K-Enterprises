@@ -68,15 +68,36 @@ $stmt->execute();
 $result = $stmt->get_result();
 
 if ($result->num_rows == 0) {
-    $stmt = $conn->prepare("INSERT INTO admin_users (username, password) VALUES (?, ?)");
-    $stmt->bind_param("ss", $username, $hashed_password);
+    $stmt = $conn->prepare('INSERT INTO admin_users (username, password, branch_id) VALUES (?, ?, NULL)');
+    $stmt->bind_param('ss', $username, $hashed_password);
     if ($stmt->execute()) {
-        $log[] = ['ok', "Default admin user 'Admin' created successfully."];
+        $log[] = ['ok', "Head Office admin 'Admin' created (all branches)."];
     } else {
         $log[] = ['err', "Error inserting admin user: " . $conn->error];
     }
 } else {
-    $log[] = ['ok', "Default admin user 'Admin' already exists."];
+    $log[] = ['ok', "Head Office admin 'Admin' already exists."];
+}
+
+$branch_admins = [
+    ['indranagar', 'Branch@123', 1, 'Indra Nagar'],
+    ['alambagh', 'Branch@123', 2, 'Alambagh'],
+];
+foreach ($branch_admins as $ba) {
+    $stmt = $conn->prepare('SELECT id FROM admin_users WHERE username = ?');
+    $stmt->bind_param('s', $ba[0]);
+    $stmt->execute();
+    if ($stmt->get_result()->num_rows === 0) {
+        $hash = password_hash($ba[1], PASSWORD_DEFAULT);
+        $branch_id = (int) $ba[2];
+        $ins = $conn->prepare('INSERT INTO admin_users (username, password, branch_id) VALUES (?, ?, ?)');
+        $ins->bind_param('ssi', $ba[0], $hash, $branch_id);
+        if ($ins->execute()) {
+            $log[] = ['ok', "Branch admin '{$ba[0]}' created for {$ba[3]}."];
+        }
+    } else {
+        $log[] = ['ok', "Branch admin '{$ba[0]}' already exists."];
+    }
 }
 ?>
 <!DOCTYPE html>

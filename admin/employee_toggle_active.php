@@ -20,17 +20,7 @@ if ($emp_id === '') {
     exit;
 }
 
-$stmt = $conn->prepare('SELECT name, is_active FROM employees WHERE emp_id = ?');
-$stmt->bind_param('s', $emp_id);
-$stmt->execute();
-$row = $stmt->get_result()->fetch_assoc();
-
-if (!$row) {
-    $_SESSION['flash_message'] = 'Employee not found.';
-    $_SESSION['flash_success'] = false;
-    header('Location: employees.php');
-    exit;
-}
+$row = require_employee_branch_access($conn, $emp_id);
 
 $new_active = employee_is_active($row) ? 0 : 1;
 $update = $conn->prepare('UPDATE employees SET is_active = ? WHERE emp_id = ?');

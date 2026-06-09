@@ -35,12 +35,8 @@ if (!empty($settings['require_payroll_approval']) && (int) $settings['require_pa
     exit;
 }
 
-$stmt = $conn->prepare('SELECT * FROM employees WHERE emp_id = ?');
-$stmt->bind_param('s', $emp_id);
-$stmt->execute();
-$employee = $stmt->get_result()->fetch_assoc();
-
-if (!$employee || empty($employee['email'])) {
+$employee = require_employee_branch_access($conn, $emp_id, $redirect);
+if (empty($employee['email'])) {
     $_SESSION['flash_message'] = 'Employee not found or has no email.';
     $_SESSION['flash_success'] = false;
     header('Location: ' . $redirect);

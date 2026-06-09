@@ -14,9 +14,16 @@ require_csrf_or_redirect('dashboard.php');
 
 $month = (int) ($_POST['month'] ?? date('n'));
 $year = (int) ($_POST['year'] ?? date('Y'));
+require_branch_context_for_write();
 $action = $_POST['period_action'] ?? '';
 $username = $_SESSION['admin_username'] ?? 'admin';
-$redirect = 'dashboard.php?month=' . $month . '&year=' . $year;
+$return_to = trim($_POST['return_to'] ?? '');
+$allowed_returns = ['upload_attendance.php', 'employee_view.php', 'holidays.php'];
+if (in_array($return_to, $allowed_returns, true)) {
+    $redirect = $return_to . '?month=' . $month . '&year=' . $year;
+} else {
+    $redirect = 'dashboard.php?month=' . $month . '&year=' . $year;
+}
 
 $map = [
     'submit_review' => 'review',

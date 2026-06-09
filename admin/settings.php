@@ -45,7 +45,8 @@ $tab_meta = [
         'icon' => '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
     ],
 ];
-$admin_users = $conn->query('SELECT id, username FROM admin_users ORDER BY username');
+$admin_users = $conn->query('SELECT id, username, branch_id FROM admin_users ORDER BY username');
+$all_branches = get_branches($conn);
 $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
 ?>
 <div class="page-header page-header-row">
@@ -83,6 +84,7 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
     <nav class="settings-tabs" aria-label="Settings sections">
         <p class="settings-nav-label">Sections</p>
         <?php foreach ($tab_meta as $key => $meta): ?>
+            <?php if ($key === 'admins' && !is_super_admin()) { continue; } ?>
             <a href="?tab=<?php echo $key; ?>" class="settings-tab <?php echo $tab === $key ? 'active' : ''; ?>">
                 <span class="settings-tab-icon-wrap">
                     <svg class="settings-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><?php echo $meta['icon']; ?></svg>
@@ -272,15 +274,8 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                     </div>
                 </div>
                 <div class="settings-form-section">
-                    <h4>TDS &amp; payroll workflow</h4>
+                    <h4>Payroll workflow</h4>
                     <div class="form-row">
-                        <div class="form-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="tds_enabled" value="1" <?php echo !empty($settings['tds_enabled']) && (int) $settings['tds_enabled'] === 1 ? 'checked' : ''; ?>>
-                                Enable TDS deduction (Form 16)
-                            </label>
-                            <span class="form-hint">Uses simplified new/old regime slabs per employee profile</span>
-                        </div>
                         <div class="form-group">
                             <label class="checkbox-label">
                                 <input type="checkbox" name="require_payroll_approval" value="1" <?php echo !isset($settings['require_payroll_approval']) || (int) $settings['require_payroll_approval'] === 1 ? 'checked' : ''; ?>>
@@ -289,10 +284,6 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                         </div>
                     </div>
                     <div class="form-row">
-                        <div class="form-group">
-                            <label>Standard deduction (₹/year)</label>
-                            <input type="number" name="tds_standard_deduction" step="1000" min="0" value="<?php echo htmlspecialchars($settings['tds_standard_deduction'] ?? '75000'); ?>">
-                        </div>
                         <div class="form-group">
                             <label>Overtime hours / day</label>
                             <input type="number" name="overtime_hours_per_day" step="0.5" min="1" max="24" value="<?php echo htmlspecialchars($settings['overtime_hours_per_day'] ?? '8'); ?>">
@@ -341,7 +332,9 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
             </form>
             <?php endif; ?>
 
-            <?php if ($tab === 'admins'): ?>
+            <?php if ($tab === 'admins' && !is_super_admin()): ?>
+                <div class="alert alert-error alert-page">Only Head Office (super admin) can manage administrator accounts.</div>
+            <?php elseif ($tab === 'admins'): ?>
             <?php
             $admin_rows = [];
             if ($admin_users) {
@@ -381,7 +374,15 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                                     <span class="admin-user-avatar" aria-hidden="true"><?php echo htmlspecialchars($initial); ?></span>
                                     <div class="admin-user-card-text">
                                         <span class="admin-user-name"><?php echo htmlspecialchars($uname); ?></span>
-                                        <span class="admin-user-meta"><?php echo $is_self ? 'Signed in as you' : 'Panel administrator'; ?></span>
+                                        <span class="admin-user-meta"><?php
+                                            if ($is_self) {
+                                                echo 'Signed in as you';
+                                            } elseif ($au['branch_id'] === null) {
+                                                echo 'Head Office · All branches';
+                                            } else {
+                                                echo htmlspecialchars(get_branch_label($conn, (int) $au['branch_id']));
+                                            }
+                                        ?></span>
                                     </div>
                                 </div>
                                 <div class="admin-user-card-actions">
@@ -412,7 +413,17 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Username</label>
-                                <input type="text" name="new_username" required autocomplete="off" placeholder="e.g. hr.admin">
+                                <input type="text" name="new_username" required autocomplete="off" placeholder="e.g. indranagar">
+                            </div>
+                            <div class="form-group">
+                                <label>Branch access</label>
+                                <select name="new_branch_id" required>
+                                    <option value="">Select branch</option>
+                                    <option value="0">Head Office (All branches)</option>
+                                    <?php foreach ($all_branches as $branch): ?>
+                                        <option value="<?php echo (int) $branch['id']; ?>"><?php echo htmlspecialchars($branch['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
                             <div class="form-group">
                                 <label>Password</label>

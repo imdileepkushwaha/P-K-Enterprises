@@ -4,7 +4,7 @@ require 'config.php';
 require 'includes/settings_helper.php';
 require_once 'includes/salary_helper.php';
 require 'includes/employee_helper.php';
-require 'includes/attendance_helper.php';
+require_once 'includes/attendance_helper.php';
 
 $emp_id = trim($_GET['emp_id'] ?? '');
 if ($emp_id === '') {
@@ -12,17 +12,7 @@ if ($emp_id === '') {
     exit;
 }
 
-$stmt = $conn->prepare("SELECT * FROM employees WHERE emp_id = ?");
-$stmt->bind_param('s', $emp_id);
-$stmt->execute();
-$employee = $stmt->get_result()->fetch_assoc();
-
-if (!$employee) {
-    $_SESSION['flash_message'] = 'Employee not found.';
-    $_SESSION['flash_success'] = false;
-    header('Location: employees.php');
-    exit;
-}
+$employee = require_employee_branch_access($conn, $emp_id);
 
 $settings = get_all_settings($conn);
 $year = (int) ($_GET['year'] ?? date('Y'));
@@ -35,8 +25,8 @@ $salary_breakdown = $salary['breakdown'];
 $recent_sent_slips = get_employee_recent_sent_slip_logs($conn, $emp_id, 6);
 $payroll_profile = get_employee_payroll_profile($conn, $emp_id);
 $payroll_adjustments = get_payroll_adjustments_for_period($conn, $emp_id, $year, $month);
-$leave_types = get_leave_types($conn);
 $holidays_map = get_holidays_for_month($conn, $year, $month);
+$roster_weekoff_dates = get_employee_weekoff_dates($conn, $emp_id, $year, $month);
 $period_locked = is_payroll_period_locked($conn, $year, $month);
 $can_send_period = can_send_slips_for_period($conn, $year, $month);
 $already_sent_slip = employee_slip_already_sent($conn, $emp_id, $year, $month);
@@ -183,7 +173,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
         <div class="ev-quick-stat ev-quick-stat-present">
             <span class="ev-quick-stat-label">Paid days</span>
             <strong><?php echo format_money($salary['paid_days']); ?></strong>
-            <span class="ev-quick-stat-sub">P <?php echo (int) $salary['present_days']; ?> · HD <?php echo (int) $salary['half_days']; ?> · L <?php echo (int) $salary['leave_days']; ?></span>
+            <span class="ev-quick-stat-sub">P <?php echo (int) $salary['present_days']; ?> · HD <?php echo (int) $salary['half_days']; ?> · L <?php echo (int) $salary['leave_days']; ?> · WO <?php echo (int) ($salary['weekoff_days'] ?? 0); ?></span>
         </div>
         <div class="ev-quick-stat ev-quick-stat-absent">
             <span class="ev-quick-stat-label">Absent days</span>
@@ -277,54 +267,6 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                     <?php endif; ?>
                 </div>
             </div>
-            <div class="ev-info-card ev-info-card-attendance">
-                <h4 class="ev-info-card-title ev-info-card-title-split">
-                    <span class="ev-info-card-title-label">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        <span>Manual attendance</span>
-                    </span>
-                    <span class="ev-info-card-badge" title="<?php echo htmlspecialchars($period_label); ?>"><?php echo htmlspecialchars(date('M Y', mktime(0, 0, 0, $month, 1, $year))); ?></span>
-                </h4>
-                <form method="POST" action="attendance_save.php" class="ev-att-edit-form ev-att-edit-form-sidebar" id="evAttForm">
-                    <?php echo csrf_field(); ?>
-                    <input type="hidden" name="emp_id" value="<?php echo htmlspecialchars($emp_id); ?>">
-                    <input type="hidden" name="month" value="<?php echo $month; ?>">
-                    <input type="hidden" name="year" value="<?php echo $year; ?>">
-                    <input type="hidden" name="attendance_action" value="save" id="evAttAction">
-                    <div class="form-group">
-                        <label>Date</label>
-                        <input type="date" name="attendance_date" id="evAttDate" required min="<?php echo sprintf('%d-%02d-01', $year, $month); ?>" max="<?php echo sprintf('%d-%02d-%d', $year, $month, (int) date('t', mktime(0, 0, 0, $month, 1, $year))); ?>" <?php echo $period_locked ? 'disabled' : ''; ?>>
-                    </div>
-                    <div class="form-group">
-                        <label>Status</label>
-                        <select name="status" id="evAttStatus" required <?php echo $period_locked ? 'disabled' : ''; ?>>
-                            <option value="Present">Present</option>
-                            <option value="Absent">Absent</option>
-                            <option value="Half day">Half day</option>
-                            <option value="Leave">Leave</option>
-                        </select>
-                    </div>
-                    <div class="form-group ev-leave-type-wrap" id="evLeaveTypeWrap" hidden>
-                        <label>Leave type</label>
-                        <select name="leave_type" id="evLeaveType" <?php echo $period_locked ? 'disabled' : ''; ?>>
-                            <?php foreach ($leave_types as $lt): ?>
-                                <option value="<?php echo htmlspecialchars($lt['code']); ?>"><?php echo htmlspecialchars($lt['code'] . ' — ' . $lt['name']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Overtime (hrs)</label>
-                        <input type="number" name="overtime_hours" id="evAttOt" step="0.5" min="0" max="24" value="0" <?php echo $period_locked ? 'disabled' : ''; ?>>
-                    </div>
-                    <?php if (!$period_locked): ?>
-                    <button type="submit" class="btn btn-sm btn-block">Save day</button>
-                    <button type="submit" class="btn btn-outline btn-sm btn-block" onclick="document.getElementById('evAttAction').value='delete';return confirm('Remove attendance for this date?');">Delete day</button>
-                    <?php else: ?>
-                    <p class="ev-att-edit-hint" style="color:#b45309">Period locked — attendance cannot be edited.</p>
-                    <?php endif; ?>
-                </form>
-                <p class="ev-att-edit-hint">Click a day on the calendar to edit. CL/SL/LOP credits apply per leave type.</p>
-            </div>
         </aside>
 
         <div class="ev-main">
@@ -367,7 +309,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                         <div class="ev-salary-meta-item ev-salary-meta-highlight">
                             <span>Paid days (<?php echo htmlspecialchars($period_label); ?>)</span>
                             <strong><?php echo format_money($salary['paid_days']); ?> / <?php echo (int) $salary['working_days']; ?> · <?php echo format_money($salary_breakdown['attendance_percent']); ?>%</strong>
-                            <span class="ev-salary-meta-sub">P <?php echo (int) $salary['present_days']; ?> · HD <?php echo (int) $salary['half_days']; ?> · L <?php echo (int) $salary['leave_days']; ?> · Abs <?php echo (int) $salary['absent_days']; ?></span>
+                            <span class="ev-salary-meta-sub">P <?php echo (int) $salary['present_days']; ?> · HD <?php echo (int) $salary['half_days']; ?> · L <?php echo (int) $salary['leave_days']; ?> · WO <?php echo (int) ($salary['weekoff_days'] ?? 0); ?> · Abs <?php echo (int) $salary['absent_days']; ?></span>
                         </div>
                     </div>
 
@@ -517,7 +459,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
             </div>
 
             <div class="panel panel-elevated">
-                <div class="panel-header"><h3>Custom salary &amp; TDS</h3></div>
+                <div class="panel-header"><h3>Custom salary profile</h3></div>
                 <div class="panel-body padded">
                     <form method="POST" action="profile_save.php" class="stack-form">
                         <?php echo csrf_field(); ?>
@@ -528,10 +470,6 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                         <div class="form-row" style="margin-top:12px">
                             <div class="form-group"><label>Basic %</label><input type="number" step="0.1" name="pct_basic" value="<?php echo htmlspecialchars($payroll_profile['pct_basic'] ?? ''); ?>"></div>
                             <div class="form-group"><label>HRA %</label><input type="number" step="0.1" name="pct_hra" value="<?php echo htmlspecialchars($payroll_profile['pct_hra'] ?? ''); ?>"></div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group"><label>Tax regime</label><select name="tax_regime"><option value="new" <?php echo ($payroll_profile['tax_regime'] ?? 'new') === 'new' ? 'selected' : ''; ?>>New</option><option value="old" <?php echo ($payroll_profile['tax_regime'] ?? '') === 'old' ? 'selected' : ''; ?>>Old</option></select></div>
-                            <div class="form-group"><label>80C (₹)</label><input type="number" step="1" name="section_80c" value="<?php echo htmlspecialchars($payroll_profile['section_80c'] ?? '0'); ?>"></div>
                         </div>
                         <button type="submit" class="btn btn-sm">Save profile</button>
                     </form>
@@ -566,6 +504,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                         <span class="att-legend-item att-code-p"><strong>P</strong> <?php echo (int) $attendance_codes['P']; ?></span>
                         <span class="att-legend-item att-code-a"><strong>A</strong> <?php echo (int) $attendance_codes['A']; ?></span>
                         <span class="att-legend-item att-code-hd"><strong>HD</strong> <?php echo (int) $attendance_codes['HD']; ?></span>
+                        <span class="att-legend-item att-code-wo"><strong>WO</strong> <?php echo (int) ($attendance_codes['WO'] ?? 0); ?></span>
                         <?php if ($attendance_codes['other'] > 0): ?>
                             <span class="att-legend-item att-code-unknown"><strong>?</strong> <?php echo (int) $attendance_codes['other']; ?></span>
                         <?php endif; ?>
@@ -573,7 +512,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                 </div>
                 <div class="panel-body att-cal-panel-body">
                     <p class="att-cal-month-title"><?php echo htmlspecialchars($period_label); ?></p>
-                    <?php echo render_attendance_calendar($year, $month, $attendance_by_date, $today_day, $holidays_map, !$period_locked, $attendance_detail); ?>
+                    <?php echo render_attendance_calendar($year, $month, $attendance_by_date, $today_day, $holidays_map, false, $attendance_detail, $roster_weekoff_dates); ?>
                     <?php if ($attendance_count === 0): ?>
                         <p class="att-cal-empty-note">No attendance uploaded for this month. <a href="upload_attendance.php">Upload attendance</a></p>
                     <?php endif; ?>
@@ -581,6 +520,7 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                         <span class="att-legend-item"><span class="att-legend-swatch att-code-p">P</span> Present</span>
                         <span class="att-legend-item"><span class="att-legend-swatch att-code-a">A</span> Absent</span>
                         <span class="att-legend-item"><span class="att-legend-swatch att-code-hd">HD</span> Half day</span>
+                        <span class="att-legend-item"><span class="att-legend-swatch att-code-wo">WO</span> Week off</span>
                         <span class="att-legend-item"><span class="att-legend-swatch att-cal-dash">—</span> None</span>
                     </div>
                 </div>
@@ -704,34 +644,6 @@ function confirmToggleStatus(name, isActive) {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
-    var statusSel = document.getElementById('evAttStatus');
-    var leaveWrap = document.getElementById('evLeaveTypeWrap');
-    function toggleLeave() {
-        if (!statusSel || !leaveWrap) return;
-        leaveWrap.hidden = statusSel.value !== 'Leave';
-    }
-    if (statusSel) {
-        statusSel.addEventListener('change', toggleLeave);
-        toggleLeave();
-    }
-    document.querySelectorAll('.att-cal-cell-clickable').forEach(function (cell) {
-        cell.addEventListener('click', function () {
-            var date = cell.getAttribute('data-date');
-            var status = cell.getAttribute('data-status') || 'Present';
-            var leave = cell.getAttribute('data-leave-type') || 'CL';
-            var ot = cell.getAttribute('data-overtime') || '0';
-            var dateInput = document.getElementById('evAttDate');
-            var statusInput = document.getElementById('evAttStatus');
-            var leaveInput = document.getElementById('evLeaveType');
-            var otInput = document.getElementById('evAttOt');
-            if (dateInput) dateInput.value = date;
-            if (statusInput) statusInput.value = status;
-            if (leaveInput && leave) leaveInput.value = leave;
-            if (otInput) otInput.value = ot;
-            toggleLeave();
-            document.getElementById('evAttForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        });
-    });
     var modal = document.getElementById('editEmployeeModal');
     if (modal && modal.parentElement !== document.body) {
         document.body.appendChild(modal);

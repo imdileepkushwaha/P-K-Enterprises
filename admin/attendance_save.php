@@ -21,7 +21,6 @@ $action = $_POST['attendance_action'] ?? 'save';
 $month = (int) ($_POST['month'] ?? date('n'));
 $year = (int) ($_POST['year'] ?? date('Y'));
 $redirect = 'employee_view.php?emp_id=' . urlencode($emp_id) . '&month=' . $month . '&year=' . $year;
-$admin_user = $_SESSION['admin_username'] ?? 'admin';
 
 if ($emp_id === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
     $_SESSION['flash_message'] = 'Invalid employee or date.';
@@ -37,15 +36,7 @@ if (is_payroll_period_locked($conn, $year, $month)) {
     exit;
 }
 
-$check = $conn->prepare('SELECT emp_id FROM employees WHERE emp_id = ?');
-$check->bind_param('s', $emp_id);
-$check->execute();
-if (!$check->get_result()->fetch_assoc()) {
-    $_SESSION['flash_message'] = 'Employee not found.';
-    $_SESSION['flash_success'] = false;
-    header('Location: employees.php');
-    exit;
-}
+require_employee_branch_access($conn, $emp_id, $redirect);
 
 $existing = $conn->prepare('SELECT status, leave_type, overtime_hours FROM attendance WHERE emp_id = ? AND attendance_date = ?');
 $existing->bind_param('ss', $emp_id, $date);
@@ -57,7 +48,6 @@ if ($action === 'delete') {
         $del = $conn->prepare('DELETE FROM attendance WHERE emp_id = ? AND attendance_date = ?');
         $del->bind_param('ss', $emp_id, $date);
         $del->execute();
-        log_attendance_audit($conn, $emp_id, $date, 'delete', $old['status'], null, $old['leave_type'] ?? null, null, $old['overtime_hours'] ?? 0, $admin_user);
     }
     $_SESSION['flash_message'] = 'Attendance record removed.';
     $_SESSION['flash_success'] = true;
@@ -65,7 +55,7 @@ if ($action === 'delete') {
     exit;
 }
 
-$allowed = ['Present', 'Absent', 'Half day', 'Leave'];
+$allowed = ['Present', 'Absent', 'Half day', 'Leave', 'Week off'];
 if (!in_array($status, $allowed, true)) {
     $_SESSION['flash_message'] = 'Invalid status.';
     $_SESSION['flash_success'] = false;
@@ -92,19 +82,6 @@ $stmt = $conn->prepare('
 $stmt->bind_param('ssssd', $emp_id, $date, $status, $leave_type, $overtime_hours);
 
 if ($stmt->execute()) {
-    $audit_action = $old ? 'update' : 'create';
-    log_attendance_audit(
-        $conn,
-        $emp_id,
-        $date,
-        $audit_action,
-        $old['status'] ?? null,
-        $status,
-        $old['leave_type'] ?? null,
-        $leave_type,
-        $overtime_hours,
-        $admin_user
-    );
     $_SESSION['flash_message'] = 'Attendance saved for ' . date('d M Y', strtotime($date)) . '.';
     $_SESSION['flash_success'] = true;
 } else {

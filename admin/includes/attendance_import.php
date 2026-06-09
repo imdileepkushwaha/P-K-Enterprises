@@ -26,8 +26,11 @@ function normalize_attendance_date($value)
 function map_attendance_status_from_code($code)
 {
     $c = strtoupper(trim((string) $code));
-    if ($c === '' || $c === 'WO' || $c === 'W/O' || $c === 'WEEK OFF' || $c === 'OFF') {
+    if ($c === '' ) {
         return null;
+    }
+    if (in_array($c, ['WO', 'W/O', 'WEEK OFF', 'WEEKOFF', 'OFF'], true)) {
+        return 'Week off';
     }
 
     return match ($c) {
@@ -39,74 +42,143 @@ function map_attendance_status_from_code($code)
     };
 }
 
-function is_wide_attendance_sheet(array $rows)
+function is_attendance_row_empty(array $row)
 {
-    if (count($rows) < 2) {
-        return false;
+    foreach ($row as $cell) {
+        if (trim((string) $cell) !== '') {
+            return false;
+        }
     }
-
-    $header = $rows[0];
-    if (!is_array($header) || count($header) < 10) {
-        return false;
-    }
-
-    $col0 = strtolower(trim((string) ($header[0] ?? '')));
-    if (strpos($col0, 'emp') === false && $col0 !== 'id') {
-        return false;
-    }
-
-    $day_cols = count_wide_sheet_day_columns($header);
-    return count($day_cols) >= 5;
+    return true;
 }
 
 function count_wide_sheet_day_columns(array $header)
 {
     $day_cols = [];
-    for ($c = 2; $c < count($header); $c++) {
+    $started = false;
+    for ($c = 0, $cMax = count($header); $c < $cMax; $c++) {
         $label = trim((string) ($header[$c] ?? ''));
         if (preg_match('/^\d{1,2}$/', $label)) {
             $day = (int) $label;
             if ($day >= 1 && $day <= 31) {
                 $day_cols[$c] = $day;
+                $started = true;
             }
-        } elseif ($day_cols !== []) {
+        } elseif ($started) {
             break;
         }
     }
     return $day_cols;
 }
 
-function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_run = false)
+function find_wide_sheet_layout(array $rows)
 {
-    $header = $rows[0];
-    $day_columns = count_wide_sheet_day_columns($header);
+    $max_scan = min(12, count($rows));
+    for ($r = 0; $r < $max_scan; $r++) {
+        if (!is_array($rows[$r])) {
+            continue;
+        }
+
+        $day_cols = count_wide_sheet_day_columns($rows[$r]);
+        if (count($day_cols) < 5) {
+            continue;
+        }
+
+        $first_day_col = min(array_keys($day_cols));
+        $name_col = max(0, $first_day_col - 1);
+        $emp_col = $first_day_col >= 2 ? $first_day_col - 2 : null;
+
+        $data_start = $r + 1;
+        while ($data_start < count($rows) && is_attendance_row_empty($rows[$data_start])) {
+            $data_start++;
+        }
+
+        return [
+            'header_row' => $r,
+            'data_start_row' => $data_start,
+            'day_columns' => $day_cols,
+            'name_col' => $name_col,
+            'emp_col' => $emp_col,
+        ];
+    }
+
+    return null;
+}
+
+function is_wide_attendance_sheet(array $rows)
+{
+    return find_wide_sheet_layout($rows) !== null;
+}
+
+function resolve_emp_id_from_wide_row(array $data, array $layout)
+{
+    $name = trim((string) ($data[$layout['name_col']] ?? ''));
+    if ($name === '' || preg_match('/^(total|grand total|summary)$/i', $name)) {
+        return ['emp_id' => '', 'name' => ''];
+    }
+
+    $emp_id = '';
+    if ($layout['emp_col'] !== null) {
+        $raw = trim((string) ($data[$layout['emp_col']] ?? ''));
+        if ($raw !== '' && preg_match('/^emp[\w-]+$/i', $raw)) {
+            $emp_id = strtoupper($raw);
+        } elseif ($raw !== '' && preg_match('/^\d+$/', $raw)) {
+            $emp_id = 'EMP' . str_pad($raw, 3, '0', STR_PAD_LEFT);
+        } elseif ($raw !== '' && !preg_match('/^(sr|s\.?\s*no|serial)$/i', $raw)) {
+            $emp_id = $raw;
+        }
+    }
+
+    if ($emp_id === '' && $name !== '') {
+        $emp_id = 'EMP' . str_pad((string) (abs(crc32(strtolower($name))) % 100000), 5, '0', STR_PAD_LEFT);
+    }
+
+    return ['emp_id' => $emp_id, 'name' => $name];
+}
+
+function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_run = false, $branch_id = 1)
+{
+    $layout = find_wide_sheet_layout($rows);
+    if ($layout === null) {
+        return [
+            'row_count' => 0,
+            'success_count' => 0,
+            'error_count' => 0,
+            'wrong_month_count' => 0,
+            'format' => 'wide',
+        ];
+    }
+
+    $day_columns = $layout['day_columns'];
     $max_day = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
 
     $row_count = 0;
     $success_count = 0;
     $error_count = 0;
-    $skipped_empty = 0;
 
-    for ($r = 1, $rMax = count($rows); $r < $rMax; $r++) {
+    if (!$dry_run && $conn) {
+        $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, branch_id, name) VALUES (?, ?, ?)');
+        $stmt_att = $conn->prepare(
+            'INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?'
+        );
+    }
+
+    for ($r = $layout['data_start_row'], $rMax = count($rows); $r < $rMax; $r++) {
         $data = $rows[$r];
-        if (!is_array($data) || count($data) < 3) {
+        if (!is_array($data) || is_attendance_row_empty($data)) {
             continue;
         }
 
-        $emp_id = trim((string) ($data[0] ?? ''));
-        $name = trim((string) ($data[1] ?? ''));
-        if ($emp_id === '') {
+        $resolved = resolve_emp_id_from_wide_row($data, $layout);
+        $emp_id = $resolved['emp_id'];
+        $name = $resolved['name'];
+        if ($emp_id === '' || $name === '') {
             continue;
         }
 
-        if (!$dry_run) {
-            $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, name) VALUES (?, ?)');
-            $stmt_emp->bind_param('ss', $emp_id, $name);
+        if (!$dry_run && $conn) {
+            $stmt_emp->bind_param('sis', $emp_id, $branch_id, $name);
             $stmt_emp->execute();
-
-            $stmt_att = $conn->prepare(
-                'INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?'
-            );
         }
 
         foreach ($day_columns as $col => $day) {
@@ -116,19 +188,17 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
 
             $code = trim((string) ($data[$col] ?? ''));
             if ($code === '') {
-                $skipped_empty++;
                 continue;
             }
 
             $status = map_attendance_status_from_code($code);
             if ($status === null) {
-                $skipped_empty++;
                 continue;
             }
 
             $date = sprintf('%d-%02d-%02d', $year, $month, $day);
-
             $row_count++;
+
             if ($dry_run) {
                 $success_count++;
             } else {
@@ -189,7 +259,7 @@ function resolve_attendance_date($value, $year, $month)
     return false;
 }
 
-function process_attendance_rows($conn, array $rows, $skip_header = true, $year = null, $month = null, $dry_run = false)
+function process_attendance_rows($conn, array $rows, $skip_header = true, $year = null, $month = null, $dry_run = false, $branch_id = 1)
 {
     $row_count = 0;
     $success_count = 0;
@@ -234,8 +304,8 @@ function process_attendance_rows($conn, array $rows, $skip_header = true, $year 
         }
 
         if (!$dry_run) {
-            $stmt_emp = $conn->prepare("INSERT IGNORE INTO employees (emp_id, name) VALUES (?, ?)");
-            $stmt_emp->bind_param("ss", $emp_id, $name);
+            $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, branch_id, name) VALUES (?, ?, ?)');
+            $stmt_emp->bind_param('sis', $emp_id, $branch_id, $name);
             $stmt_emp->execute();
 
             $stmt_att = $conn->prepare(
@@ -264,13 +334,13 @@ function process_attendance_rows($conn, array $rows, $skip_header = true, $year 
     ];
 }
 
-function process_attendance_upload($conn, array $rows, $year, $month, $dry_run = false)
+function process_attendance_upload($conn, array $rows, $year, $month, $dry_run = false, $branch_id = 1)
 {
     if (is_wide_attendance_sheet($rows)) {
-        return process_wide_attendance_rows($conn, $rows, $year, $month, $dry_run);
+        return process_wide_attendance_rows($conn, $rows, $year, $month, $dry_run, $branch_id);
     }
 
-    return process_attendance_rows($conn, $rows, true, $year, $month, $dry_run);
+    return process_attendance_rows($conn, $rows, true, $year, $month, $dry_run, $branch_id);
 }
 
 function read_attendance_file_rows($tmp_path, $extension)

@@ -35,6 +35,9 @@ function normalize_status_bucket($status)
     if (in_array($s, ['leave', 'l', 'on leave'], true)) {
         return 'leave';
     }
+    if (in_array($s, ['week off', 'weekoff', 'week-off', 'wo', 'w/o', 'off'], true)) {
+        return 'weekoff';
+    }
 
     return 'other';
 }
