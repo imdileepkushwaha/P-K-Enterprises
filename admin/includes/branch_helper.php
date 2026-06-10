@@ -5,6 +5,16 @@ if (!defined('BRANCH_FILTER_ALL')) {
     define('BRANCH_FILTER_ALL', 0);
 }
 
+/** Default branch when login branch picker is hidden (Indra Nagar). */
+if (!defined('DEFAULT_BRANCH_ID')) {
+    define('DEFAULT_BRANCH_ID', 1);
+}
+
+/** Set true later to show branch dropdown on admin login and topbar switcher. */
+if (!defined('SHOW_BRANCH_SELECTOR')) {
+    define('SHOW_BRANCH_SELECTOR', false);
+}
+
 function get_branches($conn)
 {
     static $cache = null;

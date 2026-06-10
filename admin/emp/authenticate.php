@@ -1,12 +1,15 @@
 <?php
 require_once __DIR__ . '/../includes/employee_portal_auth.php';
 init_employee_session();
+require_once __DIR__ . '/../includes/csrf_helper.php';
 require __DIR__ . '/../config.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: login.php');
     exit;
 }
+
+require_csrf_or_redirect('login.php');
 
 $emp_id = strtoupper(trim($_POST['emp_id'] ?? ''));
 $password = $_POST['password'] ?? '';

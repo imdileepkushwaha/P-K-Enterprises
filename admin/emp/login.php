@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/employee_portal_auth.php';
 init_employee_session();
 require __DIR__ . '/../config.php';
+require_once __DIR__ . '/../includes/csrf_helper.php';
 require_once __DIR__ . '/../includes/settings_helper.php';
 $login_company = trim(get_all_settings($conn)['company_name'] ?? '') ?: 'Payroll Company';
 
@@ -28,7 +29,7 @@ if (!empty($_SESSION['employee_logged_in'])) {
             <div class="login-brand login-brand-emp">E</div>
             <h2>Employee portal</h2>
             <p class="login-subtitle">View profile, attendance & submit requests</p>
-            <p class="login-hint">Use your Employee ID and portal password · Default: <strong>Emp@123</strong></p>
+            <!-- <p class="login-hint">Use your Employee ID and portal password · Default: <strong>Emp@123</strong></p> -->
             <?php
             if (isset($_SESSION['employee_login_error'])) {
                 echo "<div class='alert alert-error'>" . htmlspecialchars($_SESSION['employee_login_error']) . "</div>";
@@ -36,6 +37,7 @@ if (!empty($_SESSION['employee_logged_in'])) {
             }
             ?>
             <form action="authenticate.php" method="POST">
+                <?php echo csrf_field(); ?>
                 <div class="form-group">
                     <label for="emp_id">Employee ID</label>
                     <input type="text" name="emp_id" id="emp_id" placeholder="e.g. EMP001" required autocomplete="username">

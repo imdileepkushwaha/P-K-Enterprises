@@ -9,6 +9,7 @@ $emp_id = $employee['emp_id'];
 [$year, $month] = emp_parse_period();
 
 $period_label = get_period_label($year, $month);
+sync_approved_leave_attendance_for_period($conn, $emp_id, $year, $month);
 $stats = get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings);
 $holidays_map = get_holidays_for_month($conn, $year, $month, (int) $employee['branch_id']);
 $roster_weekoff_dates = get_employee_weekoff_dates($conn, $emp_id, $year, $month);
@@ -23,10 +24,14 @@ $att_stmt->bind_param('sii', $emp_id, $year, $month);
 $att_stmt->execute();
 $att_result = $att_stmt->get_result();
 $attendance_by_date = [];
+$attendance_detail = [];
+$month_attendance_rows = [];
 while ($row = $att_result->fetch_assoc()) {
     $attendance_by_date[$row['attendance_date']] = $row['status'];
+    $attendance_detail[$row['attendance_date']] = $row;
+    $month_attendance_rows[] = $row;
 }
-$attendance_codes = count_attendance_codes($attendance_by_date);
+$attendance_codes = count_calendar_display_codes($year, $month, $attendance_by_date, $roster_weekoff_dates, $holidays_map);
 
 $attendance_requests = get_employee_attendance_requests($conn, $emp_id, 15);
 $period_locked = is_payroll_period_locked($conn, $year, $month, (int) $employee['branch_id']);
@@ -108,35 +113,46 @@ $period_query = 'year=' . $year . '&month=' . $month;
             <div class="emp-card-toolbar">
                 <div class="emp-att-legend" aria-label="Attendance summary for <?php echo htmlspecialchars($period_label); ?>">
                     <span class="emp-att-legend-heading">Month summary</span>
-                    <div class="emp-att-legend-chips">
-                        <span class="emp-att-legend-chip emp-att-legend-chip-p">
-                            <span class="emp-att-legend-code">P</span>
-                            <span class="emp-att-legend-meta">
-                                <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['P']; ?></strong>
-                                <span class="emp-att-legend-name">Present</span>
+                    <div class="emp-att-legend-chips emp-att-summary-grid">
+                        <div class="emp-att-summary-row">
+                            <span class="emp-att-legend-chip emp-att-legend-chip-p">
+                                <span class="emp-att-legend-code">P</span>
+                                <span class="emp-att-legend-meta">
+                                    <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['P']; ?></strong>
+                                    <span class="emp-att-legend-name">Present</span>
+                                </span>
                             </span>
-                        </span>
-                        <span class="emp-att-legend-chip emp-att-legend-chip-a">
-                            <span class="emp-att-legend-code">A</span>
-                            <span class="emp-att-legend-meta">
-                                <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['A']; ?></strong>
-                                <span class="emp-att-legend-name">Absent</span>
+                            <span class="emp-att-legend-chip emp-att-legend-chip-a">
+                                <span class="emp-att-legend-code">A</span>
+                                <span class="emp-att-legend-meta">
+                                    <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['A']; ?></strong>
+                                    <span class="emp-att-legend-name">Absent</span>
+                                </span>
                             </span>
-                        </span>
-                        <span class="emp-att-legend-chip emp-att-legend-chip-hd">
-                            <span class="emp-att-legend-code">HD</span>
-                            <span class="emp-att-legend-meta">
-                                <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['HD']; ?></strong>
-                                <span class="emp-att-legend-name">Half day</span>
+                            <span class="emp-att-legend-chip emp-att-legend-chip-hd">
+                                <span class="emp-att-legend-code">HD</span>
+                                <span class="emp-att-legend-meta">
+                                    <strong class="emp-att-legend-count"><?php echo (int) $attendance_codes['HD']; ?></strong>
+                                    <span class="emp-att-legend-name">Half day</span>
+                                </span>
                             </span>
-                        </span>
-                        <span class="emp-att-legend-chip emp-att-legend-chip-wo">
-                            <span class="emp-att-legend-code">WO</span>
-                            <span class="emp-att-legend-meta">
-                                <strong class="emp-att-legend-count"><?php echo (int) ($attendance_codes['WO'] ?? 0); ?></strong>
-                                <span class="emp-att-legend-name">Week off</span>
+                        </div>
+                        <div class="emp-att-summary-row">
+                            <span class="emp-att-legend-chip emp-att-legend-chip-wo">
+                                <span class="emp-att-legend-code">WO</span>
+                                <span class="emp-att-legend-meta">
+                                    <strong class="emp-att-legend-count"><?php echo (int) ($attendance_codes['WO'] ?? 0); ?></strong>
+                                    <span class="emp-att-legend-name">Week off</span>
+                                </span>
                             </span>
-                        </span>
+                            <span class="emp-att-legend-chip emp-att-legend-chip-l">
+                                <span class="emp-att-legend-code">L</span>
+                                <span class="emp-att-legend-meta">
+                                    <strong class="emp-att-legend-count"><?php echo (int) ($attendance_codes['L'] ?? 0); ?></strong>
+                                    <span class="emp-att-legend-name">Leave</span>
+                                </span>
+                            </span>
+                        </div>
                     </div>
                 </div>
                 <?php if ($period_locked): ?>
@@ -144,7 +160,7 @@ $period_query = 'year=' . $year . '&month=' . $month;
                 <?php endif; ?>
             </div>
             <div class="emp-cal-wrap">
-                <?php echo render_attendance_calendar($year, $month, $attendance_by_date, $today_day, $holidays_map, false, [], $roster_weekoff_dates); ?>
+                <?php echo render_attendance_calendar($year, $month, $attendance_by_date, $today_day, $holidays_map, false, $attendance_detail, $roster_weekoff_dates); ?>
             </div>
             <div class="emp-cal-legend-foot">
                 <span class="emp-cal-legend-key">Legend</span>
@@ -153,8 +169,42 @@ $period_query = 'year=' . $year . '&month=' . $month;
                     <span class="emp-cal-legend-item"><span class="emp-cal-legend-swatch emp-cal-legend-a">A</span> Absent</span>
                     <span class="emp-cal-legend-item"><span class="emp-cal-legend-swatch emp-cal-legend-hd">HD</span> Half day</span>
                     <span class="emp-cal-legend-item"><span class="emp-cal-legend-swatch emp-cal-legend-wo">WO</span> Week off</span>
+                    <span class="emp-cal-legend-item"><span class="emp-cal-legend-swatch emp-cal-legend-l">L</span> Leave</span>
                 </div>
             </div>
+
+            <?php if ($month_attendance_rows !== []): ?>
+            <div class="emp-att-month-table-wrap">
+                <h4>Monthly record — <?php echo htmlspecialchars($period_label); ?></h4>
+                <div class="table-wrap">
+                    <table class="emp-req-table emp-att-month-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Day</th>
+                                <th>Status</th>
+                                <th>Leave type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($month_attendance_rows as $row): ?>
+                                <?php
+                                $code = normalize_attendance_status_code($row['status']);
+                                $code_class = attendance_code_css_class($code);
+                                $display = $code === 'L' ? attendance_leave_display_code($row) : ($code !== '' ? $code : $row['status']);
+                                ?>
+                                <tr>
+                                    <td><?php echo date('d M Y', strtotime($row['attendance_date'])); ?></td>
+                                    <td><?php echo date('l', strtotime($row['attendance_date'])); ?></td>
+                                    <td><span class="att-legend-item <?php echo htmlspecialchars($code_class); ?>"><?php echo htmlspecialchars($display); ?></span></td>
+                                    <td><?php echo !empty($row['leave_type']) ? htmlspecialchars($row['leave_type']) : '—'; ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
 
         <aside class="emp-request-panel emp-request-panel-att">

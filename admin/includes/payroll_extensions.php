@@ -128,6 +128,25 @@ function get_holidays_for_month($conn, $year, $month, $branch_id = null)
     return $map;
 }
 
+function get_holidays_for_year($conn, $year, $branch_id = null)
+{
+    if ($branch_id === null) {
+        $branch_id = payroll_context_branch_id();
+    }
+    $start = sprintf('%d-01-01', $year);
+    $end = sprintf('%d-12-31', $year);
+    $stmt = $conn->prepare('SELECT * FROM holidays WHERE branch_id = ? AND calendar_date BETWEEN ? AND ? ORDER BY calendar_date');
+    $stmt->bind_param('iss', $branch_id, $start, $end);
+    $stmt->execute();
+    $rows = [];
+    $r = $stmt->get_result();
+    while ($row = $r->fetch_assoc()) {
+        $rows[] = $row;
+    }
+
+    return $rows;
+}
+
 function get_holiday_dates_set($conn, $year, $month)
 {
     return array_keys(get_holidays_for_month($conn, $year, $month));

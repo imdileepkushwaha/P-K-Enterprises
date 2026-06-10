@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/session_auth.php';
 init_admin_session();
+require_once 'includes/csrf_helper.php';
 require 'config.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -8,12 +9,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+require_csrf_or_redirect('index.php');
+
 $username = trim($_POST['username'] ?? '');
 $password = $_POST['password'] ?? '';
 $selected_branch = (int) ($_POST['branch_id'] ?? 0);
+if (!SHOW_BRANCH_SELECTOR || $selected_branch <= 0) {
+    $selected_branch = (int) DEFAULT_BRANCH_ID;
+}
 
 if ($username === '' || $password === '') {
-    $_SESSION['login_error'] = 'Username, password, and branch are required.';
+    $_SESSION['login_error'] = 'Username and password are required.';
     header('Location: index.php');
     exit;
 }

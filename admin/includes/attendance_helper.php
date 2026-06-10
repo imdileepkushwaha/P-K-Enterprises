@@ -17,6 +17,9 @@ function normalize_attendance_status_code($status)
     if (in_array($s, ['week off', 'weekoff', 'week-off', 'wo', 'w/o', 'off'], true)) {
         return 'WO';
     }
+    if (in_array($s, ['leave', 'l'], true)) {
+        return 'L';
+    }
     if (str_starts_with($s, 'half')) {
         return 'HD';
     }
@@ -25,7 +28,7 @@ function normalize_attendance_status_code($status)
     if ($upper === 'HD') {
         return 'HD';
     }
-    if ($upper === 'P' || $upper === 'A') {
+    if (in_array($upper, ['P', 'A', 'L'], true)) {
         return $upper;
     }
 
@@ -39,6 +42,7 @@ function attendance_code_css_class($code)
         'A' => 'att-code-a',
         'HD' => 'att-code-hd',
         'WO' => 'att-code-wo',
+        'L' => 'att-code-l',
         default => 'att-code-unknown',
     };
 }
@@ -50,8 +54,17 @@ function attendance_code_label($code)
         'A' => 'Absent',
         'HD' => 'Half day',
         'WO' => 'Week off',
+        'L' => 'Leave',
         default => 'Other',
     };
+}
+
+function attendance_leave_display_code(array $detail = null)
+{
+    if ($detail && !empty($detail['leave_type'])) {
+        return strtoupper((string) $detail['leave_type']);
+    }
+    return 'L';
 }
 
 function build_attendance_date_map($result)
@@ -68,7 +81,7 @@ function build_attendance_date_map($result)
 
 function count_attendance_codes(array $date_map)
 {
-    $counts = ['P' => 0, 'A' => 0, 'HD' => 0, 'WO' => 0, 'other' => 0];
+    $counts = ['P' => 0, 'A' => 0, 'HD' => 0, 'WO' => 0, 'L' => 0, 'other' => 0];
     foreach ($date_map as $status) {
         $code = normalize_attendance_status_code($status);
         if (isset($counts[$code])) {
@@ -77,6 +90,41 @@ function count_attendance_codes(array $date_map)
             $counts['other']++;
         }
     }
+    return $counts;
+}
+
+/**
+ * Count codes the same way the attendance calendar displays them
+ * (includes roster weekoffs when no attendance record overrides the day).
+ */
+function count_calendar_display_codes($year, $month, array $attendance_by_date, array $weekoff_dates = [], array $holidays_map = [])
+{
+    $counts = ['P' => 0, 'A' => 0, 'HD' => 0, 'WO' => 0, 'L' => 0, 'other' => 0];
+    $days_in_month = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
+
+    for ($day = 1; $day <= $days_in_month; $day++) {
+        $date_key = sprintf('%d-%02d-%02d', $year, $month, $day);
+        $raw_status = $attendance_by_date[$date_key] ?? null;
+        $code = $raw_status !== null ? normalize_attendance_status_code($raw_status) : '';
+        $has_record = $raw_status !== null;
+        $is_holiday = isset($holidays_map[$date_key]);
+        $is_roster_wo = in_array($date_key, $weekoff_dates, true);
+
+        if ($is_holiday && !$has_record) {
+            continue;
+        }
+
+        if ($has_record && $code !== '') {
+            if (isset($counts[$code])) {
+                $counts[$code]++;
+            } else {
+                $counts['other']++;
+            }
+        } elseif ($is_roster_wo) {
+            $counts['WO']++;
+        }
+    }
+
     return $counts;
 }
 
@@ -115,7 +163,12 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                 <?php
                 $date_key = sprintf('%d-%02d-%02d', $year, $month, $day);
                 $raw_status = $attendance_by_date[$date_key] ?? null;
+                $detail = $attendance_detail[$date_key] ?? null;
                 $code = $raw_status !== null ? normalize_attendance_status_code($raw_status) : '';
+                $display_code = $code;
+                if ($code === 'L' && $detail) {
+                    $display_code = attendance_leave_display_code($detail);
+                }
                 $has_record = $raw_status !== null;
                 $is_holiday = isset($holidays_map[$date_key]);
                 $is_roster_wo = in_array($date_key, $weekoff_dates, true);
@@ -137,13 +190,14 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                     $cell_class .= ' att-cal-no-record';
                 }
                 $title = $has_record
-                    ? $date_key . ' — ' . attendance_code_label($code) . ' (' . $raw_status . ')'
+                    ? $date_key . ' — ' . attendance_code_label($code)
+                        . ($code === 'L' && !empty($detail['leave_type']) ? ' (' . $detail['leave_type'] . ')' : '')
+                        . ' (' . $raw_status . ')'
                     : ($is_holiday
                         ? $date_key . ' — ' . ($holidays_map[$date_key]['name'] ?? 'Holiday')
                         : ($is_roster_wo ? $date_key . ' — Week off (roster)' : $date_key . ' — No record'));
                 $data_attrs = '';
                 if ($editable) {
-                    $detail = $attendance_detail[$date_key] ?? null;
                     $leave_type = $detail['leave_type'] ?? 'CL';
                     $ot_hrs = $detail['overtime_hours'] ?? '0';
                     $data_attrs = ' data-date="' . htmlspecialchars($date_key) . '"'
@@ -158,7 +212,7 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
                     <?php if ($is_holiday && !$has_record): ?>
                         <span class="att-cal-code att-cal-holiday-code">HO</span>
                     <?php elseif ($has_record && $code !== ''): ?>
-                        <span class="att-cal-code <?php echo attendance_code_css_class($code); ?>"><?php echo htmlspecialchars($code); ?></span>
+                        <span class="att-cal-code <?php echo attendance_code_css_class($code); ?><?php echo $code === 'L' ? ' att-cal-code-leave' : ''; ?>"><?php echo htmlspecialchars($display_code); ?></span>
                     <?php elseif ($is_roster_wo): ?>
                         <span class="att-cal-code att-code-wo">WO</span>
                     <?php elseif ($has_record): ?>
@@ -172,4 +226,49 @@ function render_attendance_calendar($year, $month, array $attendance_by_date, $t
     </div>
     <?php
     return ob_get_clean();
+}
+
+function clear_branch_attendance_for_month($conn, int $branch_id, int $year, int $month): int
+{
+    require_once __DIR__ . '/weekoff_roster_helper.php';
+    [$start, $end] = get_month_date_bounds($year, $month);
+    $stmt = $conn->prepare('
+        DELETE a FROM attendance a
+        INNER JOIN employees e ON e.emp_id = a.emp_id
+        WHERE e.branch_id = ? AND a.attendance_date BETWEEN ? AND ?
+    ');
+    $stmt->bind_param('iss', $branch_id, $start, $end);
+    $stmt->execute();
+
+    return (int) $stmt->affected_rows;
+}
+
+function restore_branch_attendance_baseline_for_month($conn, int $branch_id, int $year, int $month): array
+{
+    require_once __DIR__ . '/weekoff_roster_helper.php';
+    require_once __DIR__ . '/employee_portal_helper.php';
+
+    $deleted = clear_branch_attendance_for_month($conn, $branch_id, $year, $month);
+    $wo_restored = 0;
+    $leave_restored = 0;
+
+    $roster_map = get_branch_weekoff_roster_map($conn, $year, $month, $branch_id);
+    foreach ($roster_map as $emp_id => $dates) {
+        sync_weekoff_roster_attendance($conn, $emp_id, $dates, []);
+        $wo_restored += count($dates);
+    }
+
+    $emp_stmt = $conn->prepare('SELECT emp_id FROM employees WHERE branch_id = ? AND is_active = 1');
+    $emp_stmt->bind_param('i', $branch_id);
+    $emp_stmt->execute();
+    $employees = $emp_stmt->get_result();
+    while ($emp = $employees->fetch_assoc()) {
+        $leave_restored += sync_approved_leave_attendance_for_period($conn, $emp['emp_id'], $year, $month);
+    }
+
+    return [
+        'deleted' => $deleted,
+        'wo_restored' => $wo_restored,
+        'leave_restored' => $leave_restored,
+    ];
 }

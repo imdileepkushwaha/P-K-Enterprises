@@ -25,11 +25,17 @@ $salary_breakdown = $salary['breakdown'];
 $recent_sent_slips = get_employee_recent_sent_slip_logs($conn, $emp_id, 6);
 $payroll_profile = get_employee_payroll_profile($conn, $emp_id);
 $payroll_adjustments = get_payroll_adjustments_for_period($conn, $emp_id, $year, $month);
+$adj_bonus_total = (float) ($salary['bonus_total'] ?? 0);
+$adj_incentive_total = (float) ($salary['incentive_total'] ?? 0);
+$adj_deduction_total = (float) ($salary['extra_deductions'] ?? 0);
+$adj_net_impact = round($adj_bonus_total + $adj_incentive_total - $adj_deduction_total, 2);
 $holidays_map = get_holidays_for_month($conn, $year, $month);
 $roster_weekoff_dates = get_employee_weekoff_dates($conn, $emp_id, $year, $month);
 $period_locked = is_payroll_period_locked($conn, $year, $month);
 $can_send_period = can_send_slips_for_period($conn, $year, $month);
 $already_sent_slip = employee_slip_already_sent($conn, $emp_id, $year, $month);
+
+sync_approved_leave_attendance_for_period($conn, $emp_id, $year, $month);
 
 $att_stmt = $conn->prepare("
     SELECT * FROM attendance
@@ -48,7 +54,7 @@ while ($row = $att_result->fetch_assoc()) {
     $attendance_detail[$row['attendance_date']] = $row;
 }
 $attendance_count = count($attendance_by_date);
-$attendance_codes = count_attendance_codes($attendance_by_date);
+$attendance_codes = count_calendar_display_codes($year, $month, $attendance_by_date, $roster_weekoff_dates, $holidays_map);
 $is_current_month = ((int) date('n') === $month && (int) date('Y') === $year);
 $today_day = $is_current_month ? (int) date('j') : 0;
 [$prev_month, $prev_year] = get_adjacent_period($month, $year, -1);
@@ -419,41 +425,131 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                 </div>
             </div>
 
-            <div class="panel panel-elevated">
-                <div class="panel-header"><h3>Payroll adjustments</h3><span class="panel-badge">Bonus / incentive / deduction</span></div>
-                <div class="panel-body padded">
+            <div class="panel panel-elevated ev-adj-panel">
+                <div class="panel-header ev-panel-header-split">
+                    <div class="panel-title-group">
+                        <h3>Payroll adjustments</h3>
+                        <span class="panel-badge"><?php echo htmlspecialchars($period_label); ?></span>
+                    </div>
                     <?php if (count($payroll_adjustments) > 0): ?>
-                    <ul class="ev-adj-list">
-                        <?php foreach ($payroll_adjustments as $adj): ?>
-                        <li>
-                            <span><?php echo htmlspecialchars($adj['label']); ?> <small>(<?php echo htmlspecialchars($adj['adj_type']); ?>)</small></span>
-                            <strong>₹<?php echo format_money($adj['amount']); ?></strong>
-                            <?php if (!$period_locked): ?>
-                            <form method="POST" action="adjustment_save.php" class="inline-delete-form">
+                        <span class="ev-adj-count-badge"><?php echo count($payroll_adjustments); ?> item<?php echo count($payroll_adjustments) === 1 ? '' : 's'; ?></span>
+                    <?php endif; ?>
+                </div>
+                <div class="panel-body padded ev-adj-body">
+                    <p class="ev-adj-intro">One-time bonus, incentive, or extra deductions for this pay period. Amounts are added to the salary breakdown above.</p>
+
+                    <div class="ev-adj-summary">
+                        <div class="ev-adj-summary-chip ev-adj-chip-bonus">
+                            <span class="ev-adj-chip-label">Bonus</span>
+                            <strong class="ev-adj-chip-value">+ ₹<?php echo format_money($adj_bonus_total); ?></strong>
+                        </div>
+                        <div class="ev-adj-summary-chip ev-adj-chip-incentive">
+                            <span class="ev-adj-chip-label">Incentive</span>
+                            <strong class="ev-adj-chip-value">+ ₹<?php echo format_money($adj_incentive_total); ?></strong>
+                        </div>
+                        <div class="ev-adj-summary-chip ev-adj-chip-deduction">
+                            <span class="ev-adj-chip-label">Deductions</span>
+                            <strong class="ev-adj-chip-value">− ₹<?php echo format_money($adj_deduction_total); ?></strong>
+                        </div>
+                        <div class="ev-adj-summary-chip ev-adj-chip-net<?php echo $adj_net_impact >= 0 ? ' is-positive' : ' is-negative'; ?>">
+                            <span class="ev-adj-chip-label">Net impact</span>
+                            <strong class="ev-adj-chip-value"><?php echo $adj_net_impact >= 0 ? '+' : '−'; ?> ₹<?php echo format_money(abs($adj_net_impact)); ?></strong>
+                        </div>
+                    </div>
+
+                    <?php if (count($payroll_adjustments) > 0): ?>
+                        <ul class="ev-adj-cards">
+                            <?php foreach ($payroll_adjustments as $adj):
+                                $adj_type = $adj['adj_type'] ?? 'deduction';
+                                $is_deduction = ($adj_type === 'deduction');
+                                $type_label = match ($adj_type) {
+                                    'bonus' => 'Bonus',
+                                    'incentive' => 'Incentive',
+                                    default => 'Deduction',
+                                };
+                                ?>
+                            <li class="ev-adj-card ev-adj-card-<?php echo htmlspecialchars($adj_type); ?>">
+                                <div class="ev-adj-card-icon" aria-hidden="true">
+                                    <?php if ($is_deduction): ?>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                                    <?php elseif ($adj_type === 'incentive'): ?>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                    <?php else: ?>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="ev-adj-card-main">
+                                    <span class="ev-adj-card-type"><?php echo htmlspecialchars($type_label); ?></span>
+                                    <strong class="ev-adj-card-label"><?php echo htmlspecialchars($adj['label']); ?></strong>
+                                </div>
+                                <div class="ev-adj-card-actions">
+                                    <span class="ev-adj-card-amount<?php echo $is_deduction ? ' is-deduction' : ' is-credit'; ?>">
+                                        <?php echo $is_deduction ? '−' : '+'; ?> ₹<?php echo format_money($adj['amount']); ?>
+                                    </span>
+                                    <?php if (!$period_locked): ?>
+                                    <form method="POST" action="adjustment_save.php" class="ev-adj-remove-form">
+                                        <?php echo csrf_field(); ?>
+                                        <input type="hidden" name="emp_id" value="<?php echo htmlspecialchars($emp_id); ?>">
+                                        <input type="hidden" name="month" value="<?php echo $month; ?>">
+                                        <input type="hidden" name="year" value="<?php echo $year; ?>">
+                                        <input type="hidden" name="adj_action" value="delete">
+                                        <input type="hidden" name="adj_id" value="<?php echo (int) $adj['id']; ?>">
+                                        <button type="submit" class="ev-adj-remove-btn" title="Remove adjustment" aria-label="Remove <?php echo htmlspecialchars($adj['label']); ?>">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                        </button>
+                                    </form>
+                                    <?php endif; ?>
+                                </div>
+                            </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php else: ?>
+                        <div class="ev-adj-empty">
+                            <div class="ev-adj-empty-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
+                            </div>
+                            <p><strong>No adjustments yet</strong></p>
+                            <p>Add a bonus, incentive, or one-time deduction for <?php echo htmlspecialchars($period_label); ?>.</p>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($period_locked): ?>
+                        <p class="ev-adj-lock-note">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            This payroll period is locked. Reopen it from Upload Attendance to add or remove adjustments.
+                        </p>
+                    <?php else: ?>
+                        <div class="ev-adj-form-card">
+                            <h4 class="ev-adj-form-title">Add adjustment</h4>
+                            <form method="POST" action="adjustment_save.php" class="ev-adj-form">
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="emp_id" value="<?php echo htmlspecialchars($emp_id); ?>">
                                 <input type="hidden" name="month" value="<?php echo $month; ?>">
                                 <input type="hidden" name="year" value="<?php echo $year; ?>">
-                                <input type="hidden" name="adj_action" value="delete">
-                                <input type="hidden" name="adj_id" value="<?php echo (int) $adj['id']; ?>">
-                                <button type="submit" class="btn-link" style="color:#dc2626">Remove</button>
+                                <div class="ev-adj-form-grid">
+                                    <div class="form-group">
+                                        <label for="adj_type">Type</label>
+                                        <select name="adj_type" id="adj_type" class="ev-adj-type-select">
+                                            <option value="bonus">Bonus — added to earnings</option>
+                                            <option value="incentive">Incentive — added to earnings</option>
+                                            <option value="deduction">Deduction — subtracted from net</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="adj_label">Label</label>
+                                        <input type="text" name="label" id="adj_label" required placeholder="e.g. Festival bonus, Sales incentive">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="adj_amount">Amount (₹)</label>
+                                        <input type="number" name="amount" id="adj_amount" step="0.01" min="0.01" required placeholder="0.00">
+                                    </div>
+                                    <div class="form-group ev-adj-form-submit">
+                                        <label>&nbsp;</label>
+                                        <button type="submit" class="btn btn-sm">Add adjustment</button>
+                                    </div>
+                                </div>
                             </form>
-                            <?php endif; ?>
-                        </li>
-                        <?php endforeach; ?>
-                    </ul>
-                    <?php endif; ?>
-                    <?php if (!$period_locked): ?>
-                    <form method="POST" action="adjustment_save.php" class="form-row" style="margin-top:12px">
-                        <?php echo csrf_field(); ?>
-                        <input type="hidden" name="emp_id" value="<?php echo htmlspecialchars($emp_id); ?>">
-                        <input type="hidden" name="month" value="<?php echo $month; ?>">
-                        <input type="hidden" name="year" value="<?php echo $year; ?>">
-                        <div class="form-group"><label>Type</label><select name="adj_type"><option value="bonus">Bonus</option><option value="incentive">Incentive</option><option value="deduction">Deduction</option></select></div>
-                        <div class="form-group"><label>Label</label><input type="text" name="label" required placeholder="e.g. Performance bonus"></div>
-                        <div class="form-group"><label>Amount (₹)</label><input type="number" name="amount" step="0.01" min="0.01" required></div>
-                        <div class="form-group form-group-btn"><label>&nbsp;</label><button type="submit" class="btn btn-sm">Add</button></div>
-                    </form>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>

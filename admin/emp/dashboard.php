@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/includes/header.php';
 require_once __DIR__ . '/../includes/settings_helper.php';
+require_once __DIR__ . '/../includes/salary_helper.php';
 require_once __DIR__ . '/includes/period.php';
 
 $settings = get_all_settings($conn);
@@ -14,10 +15,17 @@ $requests_limit = get_attendance_requests_per_month_limit($settings);
 $requests_remaining = employee_attendance_request_remaining($conn, $emp_id, $year, $month, $settings);
 
 $attendance_requests = get_employee_attendance_requests($conn, $emp_id, 10);
+$leave_requests = get_employee_leave_requests($conn, $emp_id, 10);
 $pending_att_requests = 0;
 foreach ($attendance_requests as $req) {
     if (($req['request_status'] ?? '') === 'pending') {
         $pending_att_requests++;
+    }
+}
+$pending_leave_requests = 0;
+foreach ($leave_requests as $req) {
+    if (($req['request_status'] ?? '') === 'pending') {
+        $pending_leave_requests++;
     }
 }
 
@@ -28,6 +36,7 @@ $portal_company = trim($settings['company_name'] ?? '') ?: 'Payroll Company';
 $hour = (int) date('G');
 $greeting = $hour < 12 ? 'Good morning' : ($hour < 17 ? 'Good afternoon' : 'Good evening');
 $today_label = date('l, j M Y');
+$sent_slip_count = count(get_employee_sent_slip_logs($conn, $emp_id, 36));
 ?>
 <div class="emp-page emp-page-dashboard">
     <?php require __DIR__ . '/includes/flash.php'; ?>
@@ -125,10 +134,13 @@ $today_label = date('l, j M Y');
         </div>
     </div>
 
-    <?php if ($has_pending_profile || $pending_att_requests > 0): ?>
+    <?php if ($has_pending_profile || $pending_att_requests > 0 || $pending_leave_requests > 0): ?>
     <div class="emp-dash-alerts">
         <?php if ($has_pending_profile): ?>
             <a href="details.php" class="emp-dash-alert emp-dash-alert-info">Profile update pending approval →</a>
+        <?php endif; ?>
+        <?php if ($pending_leave_requests > 0): ?>
+            <a href="leave.php?<?php echo $period_query; ?>" class="emp-dash-alert emp-dash-alert-warn"><?php echo $pending_leave_requests; ?> leave request<?php echo $pending_leave_requests === 1 ? '' : 's'; ?> pending →</a>
         <?php endif; ?>
         <?php if ($pending_att_requests > 0): ?>
             <a href="attendance.php?<?php echo $period_query; ?>" class="emp-dash-alert emp-dash-alert-warn"><?php echo $pending_att_requests; ?> attendance request<?php echo $pending_att_requests === 1 ? '' : 's'; ?> pending →</a>
@@ -145,6 +157,28 @@ $today_label = date('l, j M Y');
                 <h2>My attendance</h2>
                 <p>Calendar, paid days summary and manual attendance requests for <?php echo htmlspecialchars($period_label); ?>.</p>
                 <span class="emp-quick-card-cta">Open attendance →</span>
+            </div>
+        </a>
+        <a href="leave.php?<?php echo $period_query; ?>" class="emp-quick-card emp-quick-card-leave">
+            <span class="emp-quick-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            </span>
+            <div>
+                <h2>Apply for leave</h2>
+                <p>Submit CL, SL or LOP leave for admin approval. Approved leave shows on your calendar.</p>
+                <span class="emp-quick-card-cta">Apply leave →</span>
+            </div>
+        </a>
+        <a href="salary_slips.php" class="emp-quick-card emp-quick-card-slip">
+            <span class="emp-quick-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </span>
+            <div>
+                <h2>Salary slips</h2>
+                <p><?php echo $sent_slip_count > 0
+                    ? $sent_slip_count . ' sent slip' . ($sent_slip_count === 1 ? '' : 's') . ' available — view or download PDF.'
+                    : 'View salary slips after admin sends them from payroll.'; ?></p>
+                <span class="emp-quick-card-cta">Open salary slips →</span>
             </div>
         </a>
         <a href="details.php" class="emp-quick-card emp-quick-card-profile">

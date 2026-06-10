@@ -6,24 +6,22 @@ init_employee_session();
 require __DIR__ . '/../config.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: dashboard.php');
+    header('Location: leave.php');
     exit;
 }
 
 enforce_employee_session();
-require_csrf_or_redirect('attendance.php');
+require_csrf_or_redirect('leave.php');
 
 $employee = require_logged_in_employee($conn);
 $settings = get_all_settings($conn);
-$emp_id = $employee['emp_id'];
-$branch_id = (int) $employee['branch_id'];
 
-$result = create_employee_attendance_request(
+$result = create_employee_leave_request(
     $conn,
-    $emp_id,
-    $branch_id,
-    trim($_POST['attendance_date'] ?? ''),
-    trim($_POST['status'] ?? ''),
+    $employee['emp_id'],
+    (int) $employee['branch_id'],
+    trim($_POST['from_date'] ?? ''),
+    trim($_POST['to_date'] ?? ''),
     trim($_POST['leave_type'] ?? ''),
     $_POST['employee_note'] ?? '',
     $settings
@@ -31,9 +29,9 @@ $result = create_employee_attendance_request(
 
 $_SESSION['emp_flash_message'] = $result['message'];
 $_SESSION['emp_flash_success'] = $result['ok'];
-$redirect = trim($_POST['redirect'] ?? 'attendance.php');
-if (!preg_match('/^(dashboard|attendance|leave|details)\.php(\?[\w=&.-]*)?$/', $redirect)) {
-    $redirect = 'attendance.php';
+$redirect = trim($_POST['redirect'] ?? 'leave.php');
+if (!preg_match('/^leave\.php(\?[\w=&.-]*)?$/', $redirect)) {
+    $redirect = 'leave.php';
 }
 header('Location: ' . $redirect);
 exit;

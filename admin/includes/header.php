@@ -81,10 +81,13 @@ $pending_approvals_count = count_pending_approvals_for_branch($conn, get_active_
                 </a>
             </li>
             <li class="nav-logout">
-                <a href="logout.php">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                    <span>Logout</span>
-                </a>
+                <form method="POST" action="logout.php" class="nav-logout-form">
+                    <?php require_once __DIR__ . '/csrf_helper.php'; echo csrf_field(); ?>
+                    <button type="submit" class="nav-logout-btn">
+                        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        <span>Logout</span>
+                    </button>
+                </form>
             </li>
         </ul>
     </aside>
@@ -92,7 +95,7 @@ $pending_approvals_count = count_pending_approvals_for_branch($conn, get_active_
         <header class="topbar">
             <div class="topbar-left">
                 <span class="topbar-title">Payroll Management System</span>
-                <?php if (is_super_admin()): ?>
+                <?php if (is_super_admin() && SHOW_BRANCH_SELECTOR): ?>
                     <form method="GET" action="branch_switch.php" class="branch-switcher">
                         <input type="hidden" name="redirect" value="<?php echo htmlspecialchars($branch_switch_query); ?>">
                         <label class="sr-only" for="topbar-branch">Branch</label>

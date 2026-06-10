@@ -175,6 +175,7 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                 </div>
             </form>
             <form method="POST" action="test_smtp.php" class="smtp-test-form">
+                <?php echo csrf_field(); ?>
                 <h4>Test connection</h4>
                 <p class="form-hint">Save SMTP settings first, then send a test email (e.g. payroll@yopmail.com).</p>
                 <div class="form-row">

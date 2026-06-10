@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/session_auth.php';
 init_admin_session();
+require_once 'includes/csrf_helper.php';
 require 'config.php';
 
 if (!empty($_SESSION['admin_logged_in'])) {
@@ -28,7 +29,7 @@ $branches = get_branches($conn);
             <div class="login-brand">P</div>
             <h2>Welcome back</h2>
             <p class="login-subtitle">Sign in to manage payroll & attendance</p>
-            <p class="login-hint">Select your branch · Sessions end after 30 minutes of inactivity.</p>
+            <p class="login-hint">Sessions end after 30 minutes of inactivity.</p>
             <?php
             if (isset($_SESSION['login_error'])) {
                 echo "<div class='alert alert-error'>" . htmlspecialchars($_SESSION['login_error']) . "</div>";
@@ -36,12 +37,16 @@ $branches = get_branches($conn);
             }
             ?>
             <form action="authenticate.php" method="POST">
-                <div class="form-group">
+                <?php echo csrf_field(); ?>
+                <?php if (!SHOW_BRANCH_SELECTOR): ?>
+                    <input type="hidden" name="branch_id" value="<?php echo (int) DEFAULT_BRANCH_ID; ?>">
+                <?php endif; ?>
+                <div class="form-group login-branch-field<?php echo SHOW_BRANCH_SELECTOR ? '' : ' is-ui-hidden'; ?>"<?php echo SHOW_BRANCH_SELECTOR ? '' : ' aria-hidden="true"'; ?>>
                     <label for="branch_id">Branch</label>
-                    <select name="branch_id" id="branch_id" required>
+                    <select name="branch_id" id="branch_id"<?php echo SHOW_BRANCH_SELECTOR ? ' required' : ' disabled tabindex="-1"'; ?>>
                         <option value="">Select branch</option>
                         <?php foreach ($branches as $branch): ?>
-                            <option value="<?php echo (int) $branch['id']; ?>"><?php echo htmlspecialchars($branch['name']); ?></option>
+                            <option value="<?php echo (int) $branch['id']; ?>"<?php echo (int) $branch['id'] === (int) DEFAULT_BRANCH_ID ? ' selected' : ''; ?>><?php echo htmlspecialchars($branch['name']); ?></option>
                         <?php endforeach; ?>
                         <option value="0">All Branches (Head Office)</option>
                     </select>

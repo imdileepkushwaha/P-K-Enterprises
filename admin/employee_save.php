@@ -15,7 +15,13 @@ require_csrf_or_redirect('employees.php');
 $action = $_POST['action'] ?? '';
 
 if ($action === 'add') {
-    $write_branch_id = require_branch_context_for_write();
+    if (SHOW_BRANCH_SELECTOR && get_active_branch_id() === null) {
+        $_SESSION['flash_message'] = 'Select a branch from the top bar before adding an employee.';
+        $_SESSION['flash_success'] = false;
+        header('Location: employees.php');
+        exit;
+    }
+    $write_branch_id = branch_id_for_write();
     $emp_id = trim($_POST['emp_id'] ?? '');
     $name = trim($_POST['name'] ?? '');
     $email = trim($_POST['email'] ?? '');

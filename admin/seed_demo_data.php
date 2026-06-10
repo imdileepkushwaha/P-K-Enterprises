@@ -5,6 +5,7 @@
  */
 require_once 'includes/session_auth.php';
 enforce_admin_session();
+require_once 'includes/csrf_helper.php';
 require 'config.php';
 
 if (!PAYROLL_ALLOW_SETUP_TOOLS) {
@@ -42,6 +43,7 @@ $log = [];
 $run = $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm']);
 
 if ($run) {
+    require_csrf_or_redirect('seed_demo_data.php');
     $result = $conn->query('SELECT * FROM employees ORDER BY id');
     $employees = [];
     while ($row = $result->fetch_assoc()) {
@@ -153,6 +155,7 @@ require 'includes/header.php';
     </ul>
     <p class="form-hint warn-hint">Demo emails are fake — use only to test slip <strong>generation</strong> on screen, or configure SMTP to a test inbox.</p>
     <form method="POST" class="seed-actions">
+        <?php echo csrf_field(); ?>
         <input type="hidden" name="confirm" value="1">
         <button type="submit" class="btn">Fill all employee data</button>
         <a href="employees.php" class="btn btn-outline">Cancel</a>

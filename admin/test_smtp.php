@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/session_auth.php';
 enforce_admin_session();
+require_once 'includes/csrf_helper.php';
 require 'config.php';
 require 'includes/settings_helper.php';
 require 'includes/mailer.php';
@@ -9,6 +10,7 @@ $settings = get_all_settings($conn);
 $test_to = trim($_POST['test_email'] ?? $settings['smtp_from_email'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_csrf_or_redirect('settings.php?tab=smtp');
     if (!is_smtp_configured($settings) || empty($settings['smtp_password'])) {
         $_SESSION['flash_message'] = 'Complete SMTP settings including password first.';
         $_SESSION['flash_success'] = false;

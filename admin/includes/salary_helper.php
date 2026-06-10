@@ -507,13 +507,13 @@ function render_salary_slip_email_html($employee, $salary, $settings, $year, $mo
 /**
  * Latest successful send per period for one employee (newest periods first).
  *
- * @return array<int, array{period_month:int, period_year:int, net_salary:string, sent_at:string}>
+ * @return array<int, array{period_month:int, period_year:int, net_salary:string, sent_at:string, sent_to?:string}>
  */
-function get_employee_recent_sent_slip_logs($conn, $emp_id, $limit = 6)
+function get_employee_sent_slip_logs($conn, $emp_id, $limit = 24)
 {
-    $limit = max(1, min(24, (int) $limit));
+    $limit = max(1, min(48, (int) $limit));
     $stmt = $conn->prepare("
-        SELECT l.period_month, l.period_year, l.net_salary, l.sent_at
+        SELECT l.period_month, l.period_year, l.net_salary, l.sent_at, l.sent_to
         FROM salary_slip_logs l
         INNER JOIN (
             SELECT period_month, period_year, MAX(id) AS max_id
@@ -534,6 +534,11 @@ function get_employee_recent_sent_slip_logs($conn, $emp_id, $limit = 6)
         }
     }
     return $rows;
+}
+
+function get_employee_recent_sent_slip_logs($conn, $emp_id, $limit = 6)
+{
+    return get_employee_sent_slip_logs($conn, $emp_id, $limit);
 }
 
 function get_slip_send_status_for_period($conn, $year, $month)

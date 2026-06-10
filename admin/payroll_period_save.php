@@ -14,7 +14,12 @@ require_csrf_or_redirect('dashboard.php');
 
 $month = (int) ($_POST['month'] ?? date('n'));
 $year = (int) ($_POST['year'] ?? date('Y'));
-require_branch_context_for_write();
+if (SHOW_BRANCH_SELECTOR && get_active_branch_id() === null) {
+    $_SESSION['flash_message'] = 'Select a branch from the top bar before changing payroll period status.';
+    $_SESSION['flash_success'] = false;
+    header('Location: dashboard.php?month=' . $month . '&year=' . $year);
+    exit;
+}
 $action = $_POST['period_action'] ?? '';
 $username = $_SESSION['admin_username'] ?? 'admin';
 $return_to = trim($_POST['return_to'] ?? '');

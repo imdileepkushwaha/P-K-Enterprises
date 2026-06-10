@@ -1,10 +1,13 @@
 <?php
 require 'config.php';
+require_once 'includes/session_auth.php';
 require_once 'includes/csrf_helper.php';
 require_once 'includes/settings_helper.php';
 
-$year = (int) ($_GET['year'] ?? date('Y'));
-$month = (int) ($_GET['month'] ?? date('n'));
+enforce_admin_session();
+
+$year = (int) ($_REQUEST['year'] ?? date('Y'));
+$month = (int) ($_REQUEST['month'] ?? date('n'));
 if ($month < 1 || $month > 12) {
     $month = (int) date('n');
 }
@@ -28,7 +31,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $branch_id = require_branch_context_for_write();
+    if (SHOW_BRANCH_SELECTOR && get_active_branch_id() === null) {
+        $_SESSION['flash_message'] = 'Select a branch from the top bar before saving weekoff roster.';
+        $_SESSION['flash_success'] = false;
+        header('Location: ' . $redirect_base);
+        exit;
+    }
+    $branch_id = branch_id_for_write();
 
     if ($action === 'copy_prev') {
         $copied = copy_branch_weekoff_roster($conn, $branch_id, $year, $month);
@@ -198,15 +207,21 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                 <p>Apply common patterns, then fine-tune in the grid.</p>
                 <form method="POST" class="stack-form weekoff-roster-actions">
                     <?php echo csrf_field(); ?>
+                    <input type="hidden" name="year" value="<?php echo $year; ?>">
+                    <input type="hidden" name="month" value="<?php echo $month; ?>">
                     <?php if (get_active_branch_id() === null || $period_locked): ?><fieldset disabled><?php endif; ?>
                     <input type="hidden" name="roster_action" value="copy_prev">
                     <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Copy last month roster (same day numbers) for all employees?');">Copy from last month</button>
+                    <?php if (get_active_branch_id() === null || $period_locked): ?></fieldset><?php endif; ?>
                 </form>
                 <form method="POST" class="stack-form weekoff-roster-actions">
                     <?php echo csrf_field(); ?>
+                    <input type="hidden" name="year" value="<?php echo $year; ?>">
+                    <input type="hidden" name="month" value="<?php echo $month; ?>">
                     <?php if (get_active_branch_id() === null || $period_locked): ?><fieldset disabled><?php endif; ?>
                     <input type="hidden" name="roster_action" value="apply_sundays">
                     <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Add all Sundays as weekoffs for every employee? Existing selections are kept.');">Add all Sundays</button>
+                    <?php if (get_active_branch_id() === null || $period_locked): ?></fieldset><?php endif; ?>
                 </form>
             </div>
             <div class="weekoff-roster-side-card weekoff-roster-tip">
@@ -234,6 +249,8 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                     <?php else: ?>
                         <form method="POST" id="weekoffRosterForm" class="weekoff-roster-form">
                             <?php echo csrf_field(); ?>
+                            <input type="hidden" name="year" value="<?php echo $year; ?>">
+                            <input type="hidden" name="month" value="<?php echo $month; ?>">
                             <input type="hidden" name="roster_action" value="save">
                             <div class="weekoff-roster-scroll">
                                 <table class="weekoff-roster-grid">

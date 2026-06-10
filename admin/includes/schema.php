@@ -158,6 +158,23 @@ function ensure_database_schema($conn)
             KEY `branch_status` (`branch_id`, `request_status`),
             KEY `emp_month` (`emp_id`, `attendance_date`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS `employee_leave_requests` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `emp_id` varchar(50) NOT NULL,
+            `branch_id` int(11) NOT NULL,
+            `from_date` date NOT NULL,
+            `to_date` date NOT NULL,
+            `leave_type` varchar(10) NOT NULL,
+            `employee_note` text,
+            `request_status` varchar(20) NOT NULL DEFAULT 'pending',
+            `reviewed_by` varchar(50) DEFAULT NULL,
+            `reviewed_at` datetime DEFAULT NULL,
+            `review_note` text,
+            `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `branch_status` (`branch_id`, `request_status`),
+            KEY `emp_dates` (`emp_id`, `from_date`, `to_date`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 
     foreach ($tables as $sql) {
@@ -370,6 +387,7 @@ function seed_default_settings($conn)
         'require_payroll_approval' => '1',
         'weekoff_day_credit' => '1',
         'employee_attendance_requests_per_month' => '3',
+        'employee_leave_requests_per_month' => '5',
         'default_employee_portal_password' => 'Emp@123',
     ];
 

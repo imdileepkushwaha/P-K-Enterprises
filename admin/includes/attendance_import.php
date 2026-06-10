@@ -42,6 +42,87 @@ function map_attendance_status_from_code($code)
     };
 }
 
+function attendance_import_holiday_dates_for_period($conn, int $year, int $month, int $branch_id): array
+{
+    $holidays = get_holidays_for_month($conn, $year, $month, $branch_id);
+    $dates = [];
+    foreach ($holidays as $date => $row) {
+        if (($row['kind'] ?? 'holiday') === 'holiday') {
+            $dates[$date] = true;
+        }
+    }
+
+    return $dates;
+}
+
+function attendance_import_load_employee_context($conn, $emp_id, $year, $month, array $holiday_dates = [])
+{
+    [$start, $end] = get_month_date_bounds($year, $month);
+
+    $attendance_by_date = [];
+    $stmt = $conn->prepare('SELECT attendance_date, status FROM attendance WHERE emp_id = ? AND attendance_date BETWEEN ? AND ?');
+    $stmt->bind_param('sss', $emp_id, $start, $end);
+    $stmt->execute();
+    $r = $stmt->get_result();
+    while ($row = $r->fetch_assoc()) {
+        $attendance_by_date[$row['attendance_date']] = $row['status'];
+    }
+
+    $roster_dates = array_flip(get_employee_weekoff_dates($conn, $emp_id, $year, $month));
+
+    $approved_leave_dates = [];
+    $leave_stmt = $conn->prepare("
+        SELECT from_date, to_date FROM employee_leave_requests
+        WHERE emp_id = ? AND request_status = 'approved'
+          AND from_date <= ? AND to_date >= ?
+    ");
+    $leave_stmt->bind_param('sss', $emp_id, $end, $start);
+    $leave_stmt->execute();
+    $leave_rows = $leave_stmt->get_result();
+    while ($row = $leave_rows->fetch_assoc()) {
+        foreach (leave_request_dates_in_range($row['from_date'], $row['to_date']) as $date) {
+            if ($date >= $start && $date <= $end) {
+                $approved_leave_dates[$date] = true;
+            }
+        }
+    }
+
+    return [
+        'attendance' => $attendance_by_date,
+        'roster' => $roster_dates,
+        'approved_leave' => $approved_leave_dates,
+        'holiday_dates' => $holiday_dates,
+    ];
+}
+
+/**
+ * Skip Excel P/A/HD on holidays, weekoff (roster or attendance), or approved leave.
+ * Explicit WO / L in the file is still applied.
+ */
+function attendance_import_should_protect_cell($new_status, $date, array $ctx)
+{
+    $new_bucket = normalize_status_bucket($new_status);
+    if (in_array($new_bucket, ['leave', 'weekoff'], true)) {
+        return false;
+    }
+
+    if (isset($ctx['holiday_dates'][$date])) {
+        return true;
+    }
+
+    $existing = $ctx['attendance'][$date] ?? null;
+    $existing_bucket = $existing !== null ? normalize_status_bucket($existing) : null;
+
+    if ($existing_bucket === 'leave' || isset($ctx['approved_leave'][$date])) {
+        return true;
+    }
+    if ($existing_bucket === 'weekoff' || isset($ctx['roster'][$date])) {
+        return true;
+    }
+
+    return false;
+}
+
 function is_attendance_row_empty(array $row)
 {
     foreach ($row as $cell) {
@@ -136,6 +217,135 @@ function resolve_emp_id_from_wide_row(array $data, array $layout)
     return ['emp_id' => $emp_id, 'name' => $name];
 }
 
+function attendance_upload_pending_dir()
+{
+    $dir = dirname(__DIR__) . '/tmp/uploads';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    return $dir;
+}
+
+function attendance_upload_save_pending(array $rows, int $year, int $month, int $branch_id, array $meta = []): string
+{
+    $token = bin2hex(random_bytes(16));
+    $path = attendance_upload_pending_dir() . '/att_' . $token . '.json';
+    file_put_contents($path, json_encode(array_merge([
+        'rows' => $rows,
+        'year' => $year,
+        'month' => $month,
+        'branch_id' => $branch_id,
+    ], $meta), JSON_UNESCAPED_UNICODE));
+    return $token;
+}
+
+function attendance_import_preview_per_page(): int
+{
+    return 25;
+}
+
+function attendance_import_pagination_pages(int $page, int $total_pages): array
+{
+    if ($total_pages <= 1) {
+        return [];
+    }
+    if ($total_pages <= 7) {
+        return range(1, $total_pages);
+    }
+
+    $pages = [1];
+    if ($page > 3) {
+        $pages[] = null;
+    }
+    for ($i = max(2, $page - 1); $i <= min($total_pages - 1, $page + 1); $i++) {
+        $pages[] = $i;
+    }
+    if ($page < $total_pages - 2) {
+        $pages[] = null;
+    }
+    $pages[] = $total_pages;
+
+    return $pages;
+}
+
+function attendance_upload_preview_url(int $month, int $year, int $page = 1): string
+{
+    $query = [
+        'preview' => 1,
+        'month' => $month,
+        'year' => $year,
+    ];
+    if ($page > 1) {
+        $query['preview_page'] = $page;
+    }
+
+    return 'upload_attendance.php?' . http_build_query($query);
+}
+
+function attendance_import_preview_badge_class(string $code): string
+{
+    return match ($code) {
+        'P' => 'badge-present',
+        'A' => 'badge-absent',
+        'HD' => 'badge-hd',
+        'WO' => 'badge-wo',
+        'L' => 'badge-leave',
+        default => '',
+    };
+}
+
+function attendance_upload_load_pending(string $token): ?array
+{
+    $token = preg_replace('/[^a-f0-9]/', '', strtolower($token));
+    if ($token === '') {
+        return null;
+    }
+    $path = attendance_upload_pending_dir() . '/att_' . $token . '.json';
+    if (!is_file($path)) {
+        return null;
+    }
+    $data = json_decode((string) file_get_contents($path), true);
+    return is_array($data) ? $data : null;
+}
+
+function attendance_upload_delete_pending(?string $token): void
+{
+    if ($token === null || $token === '') {
+        return;
+    }
+    $token = preg_replace('/[^a-f0-9]/', '', strtolower($token));
+    if ($token === '') {
+        return;
+    }
+    $path = attendance_upload_pending_dir() . '/att_' . $token . '.json';
+    if (is_file($path)) {
+        unlink($path);
+    }
+}
+
+function attendance_upload_clear_session_pending(): void
+{
+    $pending = $_SESSION['upload_pending'] ?? null;
+    if (is_array($pending) && !empty($pending['token'])) {
+        attendance_upload_delete_pending($pending['token']);
+    }
+    unset($_SESSION['upload_pending']);
+}
+
+function attendance_import_preview_push(array &$preview_items, int $limit, string $emp_id, string $name, string $date, string $status, string $code = '')
+{
+    if ($limit > 0 && count($preview_items) >= $limit) {
+        return;
+    }
+    $preview_items[] = [
+        'emp_id' => $emp_id,
+        'name' => $name,
+        'date' => $date,
+        'status' => $status,
+        'code' => $code !== '' ? $code : normalize_attendance_status_code($status),
+    ];
+}
+
 function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_run = false, $branch_id = 1)
 {
     $layout = find_wide_sheet_layout($rows);
@@ -155,6 +365,10 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
     $row_count = 0;
     $success_count = 0;
     $error_count = 0;
+    $protected_skip_count = 0;
+    $preview_items = [];
+    $preview_limit = 0;
+    $employee_ids = [];
 
     if (!$dry_run && $conn) {
         $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, branch_id, name) VALUES (?, ?, ?)');
@@ -162,6 +376,11 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
             'INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?'
         );
     }
+
+    $employee_context = [];
+    $holiday_dates = $conn
+        ? attendance_import_holiday_dates_for_period($conn, $year, $month, $branch_id)
+        : [];
 
     for ($r = $layout['data_start_row'], $rMax = count($rows); $r < $rMax; $r++) {
         $data = $rows[$r];
@@ -181,6 +400,13 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
             $stmt_emp->execute();
         }
 
+        if (!isset($employee_context[$emp_id])) {
+            $employee_context[$emp_id] = $conn
+                ? attendance_import_load_employee_context($conn, $emp_id, $year, $month, $holiday_dates)
+                : ['attendance' => [], 'roster' => [], 'approved_leave' => [], 'holiday_dates' => $holiday_dates];
+        }
+        $ctx = $employee_context[$emp_id];
+
         foreach ($day_columns as $col => $day) {
             if ($day > $max_day) {
                 continue;
@@ -199,25 +425,38 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
             $date = sprintf('%d-%02d-%02d', $year, $month, $day);
             $row_count++;
 
+            if (attendance_import_should_protect_cell($status, $date, $ctx)) {
+                $protected_skip_count++;
+                continue;
+            }
+
             if ($dry_run) {
                 $success_count++;
+                $employee_ids[$emp_id] = true;
+                attendance_import_preview_push($preview_items, $preview_limit, $emp_id, $name, $date, $status, $code);
             } else {
                 $stmt_att->bind_param('ssss', $emp_id, $date, $status, $status);
                 if ($stmt_att->execute()) {
                     $success_count++;
+                    $ctx['attendance'][$date] = $status;
+                    $employee_ids[$emp_id] = true;
                 } else {
                     $error_count++;
                 }
             }
         }
+        $employee_context[$emp_id] = $ctx;
     }
 
     return [
         'row_count' => $row_count,
         'success_count' => $success_count,
         'error_count' => $error_count,
+        'protected_skip_count' => $protected_skip_count,
         'wrong_month_count' => 0,
         'format' => 'wide',
+        'preview_items' => $preview_items,
+        'employee_count' => count($employee_ids),
     ];
 }
 
@@ -264,9 +503,24 @@ function process_attendance_rows($conn, array $rows, $skip_header = true, $year 
     $row_count = 0;
     $success_count = 0;
     $error_count = 0;
+    $protected_skip_count = 0;
     $wrong_month_count = 0;
+    $preview_items = [];
+    $preview_limit = 0;
+    $employee_ids = [];
     $is_first = true;
     $use_period = $year !== null && $month !== null;
+    $employee_context = [];
+    $stmt_att = null;
+    $holiday_dates = ($conn && $use_period)
+        ? attendance_import_holiday_dates_for_period($conn, (int) $year, (int) $month, $branch_id)
+        : [];
+
+    if (!$dry_run && $conn) {
+        $stmt_att = $conn->prepare(
+            'INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?'
+        );
+    }
 
     foreach ($rows as $data) {
         if (!is_array($data)) {
@@ -303,34 +557,51 @@ function process_attendance_rows($conn, array $rows, $skip_header = true, $year 
             continue;
         }
 
+        $row_count++;
+
+        if (!isset($employee_context[$emp_id])) {
+            $employee_context[$emp_id] = ($conn && $use_period)
+                ? attendance_import_load_employee_context($conn, $emp_id, $year, $month, $holiday_dates)
+                : ['attendance' => [], 'roster' => [], 'approved_leave' => [], 'holiday_dates' => $holiday_dates];
+        }
+        $ctx = $employee_context[$emp_id];
+
+        if ($use_period && attendance_import_should_protect_cell($status, $date, $ctx)) {
+            $protected_skip_count++;
+            continue;
+        }
+
         if (!$dry_run) {
             $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, branch_id, name) VALUES (?, ?, ?)');
             $stmt_emp->bind_param('sis', $emp_id, $branch_id, $name);
             $stmt_emp->execute();
 
-            $stmt_att = $conn->prepare(
-                "INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?"
-            );
-            $stmt_att->bind_param("ssss", $emp_id, $date, $status, $status);
+            $stmt_att->bind_param('ssss', $emp_id, $date, $status, $status);
 
             if ($stmt_att->execute()) {
                 $success_count++;
+                $ctx['attendance'][$date] = $status;
             } else {
                 $error_count++;
             }
         } else {
             $success_count++;
+            $employee_ids[$emp_id] = true;
+            attendance_import_preview_push($preview_items, $preview_limit, $emp_id, $name, $date, $status);
         }
 
-        $row_count++;
+        $employee_context[$emp_id] = $ctx;
     }
 
     return [
         'row_count' => $row_count,
         'success_count' => $success_count,
         'error_count' => $error_count,
+        'protected_skip_count' => $protected_skip_count,
         'wrong_month_count' => $wrong_month_count,
         'format' => 'list',
+        'preview_items' => $preview_items,
+        'employee_count' => count($employee_ids),
     ];
 }
 

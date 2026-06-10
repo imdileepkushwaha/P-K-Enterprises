@@ -24,6 +24,8 @@ $footer_branch = $branch_label ?? '';
             <nav class="emp-site-footer-nav" aria-label="Footer navigation">
                 <a href="dashboard.php" class="<?php echo $footer_page === 'dashboard.php' ? 'active' : ''; ?>">Dashboard</a>
                 <a href="attendance.php" class="<?php echo $footer_page === 'attendance.php' ? 'active' : ''; ?>">My attendance</a>
+                <a href="leave.php" class="<?php echo $footer_page === 'leave.php' ? 'active' : ''; ?>">Apply leave</a>
+                <a href="salary_slips.php" class="<?php echo $footer_page === 'salary_slips.php' ? 'active' : ''; ?>">Salary slips</a>
                 <a href="details.php" class="<?php echo $footer_page === 'details.php' ? 'active' : ''; ?>">My details</a>
                 <a href="logout.php">Logout</a>
             </nav>
