@@ -4,14 +4,26 @@ if (isset($GLOBALS['pk_db_conn']) && $GLOBALS['pk_db_conn'] instanceof mysqli) {
     return;
 }
 
-$host = 'localhost';
-$user = 'root';
-$pass = '';
-$db = 'pk_db';
-
-/** Set false on production to disable setup.php and seed_demo_data.php */
-if (!defined('PAYROLL_ALLOW_SETUP_TOOLS')) {
-    define('PAYROLL_ALLOW_SETUP_TOOLS', true);
+if ($_SERVER['SERVER_NAME'] === 'localhost' || $_SERVER['SERVER_NAME'] === '127.0.0.1') {
+    $host = 'localhost';
+    $user = 'root';
+    $pass = '';
+    $db = 'pk_db';
+    
+    if (!defined('PAYROLL_ALLOW_SETUP_TOOLS')) {
+        define('PAYROLL_ALLOW_SETUP_TOOLS', true);
+    }
+} else {
+    // Online DB Configuration
+    $host = 'localhost';
+    $user = 'pkpayroll';
+    $pass = 'h2cCn$y0$zN4uGdj';
+    $db = 'pkpayroll_db';
+    
+    /** Set false on production to disable setup.php and seed_demo_data.php */
+    if (!defined('PAYROLL_ALLOW_SETUP_TOOLS')) {
+        define('PAYROLL_ALLOW_SETUP_TOOLS', true);
+    }
 }
 
 $conn = new mysqli($host, $user, $pass, $db);
