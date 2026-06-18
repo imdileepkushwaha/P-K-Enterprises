@@ -191,9 +191,19 @@ function build_salary_component_breakdown(array $salary, $settings = [])
     }
 
     $pf_pct = (float) ($settings['pf_percent'] ?? 12);
+    $pf_min = (float) ($settings['pf_min_limit'] ?? 0);
+    $pf_max = (float) ($settings['pf_max_limit'] ?? 15000);
     $pt = (float) ($settings['professional_tax'] ?? 200);
     $esi_pct = (float) ($settings['esi_percent'] ?? 0.75);
     $esi_limit = (float) ($settings['esi_gross_limit'] ?? 21000);
+
+    $pf_basic = $basic_monthly;
+    if ($pf_min > 0 && $pf_basic < $pf_min) {
+        $pf_basic = $pf_min;
+    }
+    if ($pf_max > 0 && $pf_basic > $pf_max) {
+        $pf_basic = $pf_max;
+    }
 
     $deduction_defs = [
         [
@@ -201,7 +211,7 @@ function build_salary_component_breakdown(array $salary, $settings = [])
             'label' => 'Provident Fund (PF)',
             'hint' => $pf_pct . '% of Basic',
             'percent_label' => $pf_pct . '% of Basic',
-            'monthly' => round($basic_monthly * $pf_pct / 100, 2),
+            'monthly' => round($pf_basic * $pf_pct / 100, 2),
         ],
         [
             'id' => 'pt',

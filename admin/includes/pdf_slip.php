@@ -3,261 +3,193 @@
 require_once __DIR__ . '/../lib/fpdf.php';
 require_once __DIR__ . '/signature_helper.php';
 
-function pdf_set_fill($pdf, $r, $g, $b)
-{
-    $pdf->SetFillColor($r, $g, $b);
-}
-
-function pdf_set_draw($pdf, $r, $g, $b)
-{
-    $pdf->SetDrawColor($r, $g, $b);
-}
-
-function pdf_set_text($pdf, $r, $g, $b)
-{
-    $pdf->SetTextColor($r, $g, $b);
-}
-
-function pdf_section_bar($pdf, $title, $width = 190)
-{
-    pdf_set_fill($pdf, 248, 250, 252);
-    pdf_set_draw($pdf, 226, 232, 240);
-    pdf_set_text($pdf, 51, 65, 85);
-    $pdf->SetFont('Arial', 'B', 8);
-    $pdf->Cell($width, 6, '  ' . strtoupper($title), 'LTR', 1, 'L', true);
-}
-
-function pdf_kv_row($pdf, $label, $value, $labelW = 42, $rowH = 6.5)
-{
-    pdf_set_draw($pdf, 226, 232, 240);
-    pdf_set_fill($pdf, 248, 250, 252);
-    pdf_set_text($pdf, 100, 116, 139);
-    $pdf->SetFont('Arial', '', 7);
-    $pdf->Cell($labelW, $rowH, ' ' . $label, 1, 0, 'L', true);
-    pdf_set_fill($pdf, 255, 255, 255);
-    pdf_set_text($pdf, 30, 41, 59);
-    $pdf->SetFont('Arial', 'B', 8);
-    $pdf->Cell(190 - $labelW, $rowH, $value, 1, 1, 'L');
-}
-
-function pdf_money_row($pdf, $label, $value, $opts = [])
-{
-    $rowH = $opts['h'] ?? 6.5;
-    $bold = !empty($opts['bold']);
-    $accent = $opts['accent'] ?? null;
-
-    if ($accent === 'earn') {
-        pdf_set_fill($pdf, 240, 253, 244);
-    } elseif ($accent === 'ded') {
-        pdf_set_fill($pdf, 254, 242, 242);
-    } elseif ($bold) {
-        pdf_set_fill($pdf, 248, 250, 252);
-    } else {
-        pdf_set_fill($pdf, 255, 255, 255);
+function numberToWordsIndian($number) {
+    $no = floor($number);
+    $point = round($number - $no, 2) * 100;
+    $hundred = null;
+    $digits_1 = strlen($no);
+    $i = 0;
+    $str = array();
+    $words = array('0' => '', '1' => 'One', '2' => 'Two',
+        '3' => 'Three', '4' => 'Four', '5' => 'Five', '6' => 'Six',
+        '7' => 'Seven', '8' => 'Eight', '9' => 'Nine',
+        '10' => 'Ten', '11' => 'Eleven', '12' => 'Twelve',
+        '13' => 'Thirteen', '14' => 'Fourteen',
+        '15' => 'Fifteen', '16' => 'Sixteen', '17' => 'Seventeen',
+        '18' => 'Eighteen', '19' => 'Nineteen', '20' => 'Twenty',
+        '30' => 'Thirty', '40' => 'Forty', '50' => 'Fifty',
+        '60' => 'Sixty', '70' => 'Seventy',
+        '80' => 'Eighty', '90' => 'Ninety');
+    $digits = array('', 'Hundred', 'Thousand', 'Lakh', 'Crore');
+    while ($i < $digits_1) {
+        $divider = ($i == 2) ? 10 : 100;
+        $number = floor($no % $divider);
+        $no = floor($no / $divider);
+        $i += ($divider == 10) ? 1 : 2;
+        if ($number) {
+            $plural = (($counter = count($str)) && $number > 9) ? 's' : null;
+            $hundred = ($counter == 1 && $str[0]) ? ' and ' : null;
+            $str [] = ($number < 21) ? $words[$number] .
+                " " . $digits[$counter] . $plural . " " . $hundred
+                :
+                $words[floor($number / 10) * 10]
+                . " " . $words[$number % 10] . " "
+                . $digits[$counter] . $plural . " " . $hundred;
+        } else {
+            $str[] = null;
+        }
     }
-
-    pdf_set_draw($pdf, 226, 232, 240);
-    pdf_set_text($pdf, 51, 65, 85);
-    $pdf->SetFont('Arial', $bold ? 'B' : '', $bold ? 8 : 7);
-    $pdf->Cell(115, $rowH, '  ' . $label, 1, 0, 'L', true);
-
-    if ($accent === 'ded') {
-        pdf_set_text($pdf, 185, 28, 28);
-    } else {
-        pdf_set_text($pdf, 30, 41, 59);
-    }
-    $pdf->SetFont('Arial', $bold ? 'B' : '', $bold ? 8 : 7);
-    $pdf->Cell(75, $rowH, $value, 1, 1, 'R', true);
+    $str = array_reverse($str);
+    $result = implode('', $str);
+    $points = ($point) ?
+        " and " . $words[$point / 10] . " " .
+        $words[$point = $point % 10] . " Paise" : "";
+    return trim($result) . $points . " Only";
 }
 
-function generate_salary_slip_pdf($employee, $salary, $settings, $year, $month)
+function generate_salary_slip_pdf($conn, $employee, $salary, $settings, $year, $month)
 {
     $company = $settings['company_name'] ?? 'Company';
-    $period = get_period_label($year, $month);
-    $generated = date('d M Y');
+    $period = strtoupper(date('F Y', mktime(0, 0, 0, $month, 1, $year)));
     $breakdown = $salary['breakdown'] ?? build_salary_component_breakdown($salary, $settings);
+
+    // Get leave balances
+    $leave_bals = ['CL' => 0, 'SL' => 0, 'PL' => 0];
+    if ($conn) {
+        $stmt = $conn->prepare("SELECT leave_type, balance FROM employee_leave_balances WHERE emp_id = ?");
+        $stmt->bind_param('s', $employee['emp_id']);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $leave_bals[$row['leave_type']] = $row['balance'];
+        }
+    }
 
     $pdf = new FPDF('P', 'mm', 'A4');
     $pdf->SetMargins(10, 10, 10);
     $pdf->SetAutoPageBreak(false);
     $pdf->AddPage();
 
-    $x = 10;
-    $w = 190;
+    $pdf->SetFont('Arial', 'B', 14);
+    $pdf->Cell(190, 8, $company, 0, 1, 'C');
+    $pdf->SetFont('Arial', 'B', 10);
+    $pdf->Cell(190, 6, 'PAY SLIP FOR THE MONTH OF ' . $period, 0, 1, 'C');
+    $pdf->Ln(2);
 
-    // Header
-    pdf_set_fill($pdf, 30, 41, 59);
-    $pdf->Rect($x, 10, $w, 28, 'F');
-    pdf_set_fill($pdf, 79, 70, 229);
-    $pdf->Rect($x, 10, 5, 28, 'F');
-
-    pdf_set_text($pdf, 255, 255, 255);
-    $pdf->SetFont('Arial', 'B', 18);
-    $pdf->SetXY($x + 10, 14);
-    $pdf->Cell(115, 8, $company, 0, 0, 'L');
-    $pdf->SetFont('Arial', 'B', 11);
-    $pdf->Cell(60, 8, 'SALARY SLIP', 0, 1, 'R');
-    $pdf->SetX($x + 10);
-    $pdf->SetFont('Arial', '', 9);
-    $pdf->Cell(115, 5, 'Official Pay Statement', 0, 0, 'L');
-    $pdf->SetFont('Arial', 'B', 9);
-    $pdf->Cell(60, 5, $period, 0, 1, 'R');
-    $pdf->SetX($x + 10);
     $pdf->SetFont('Arial', '', 8);
-    $pdf->Cell(175, 4, 'Generated: ' . $generated, 0, 1, 'R');
+    $cw1 = 25; $cw2 = 45; $cw3 = 20; $cw4 = 40; $cw5 = 20; $cw6 = 40;
 
-    $pdf->SetY(40);
+    // Row 1
+    $pdf->Cell($cw1, 6, 'Emp. Code', 1, 0, 'L');
+    $pdf->Cell($cw2, 6, ' ' . $employee['emp_id'], 1, 0, 'L');
+    $pdf->Cell($cw3, 6, 'D.O.J.', 1, 0, 'L');
+    $pdf->Cell($cw4, 6, ' ' . ($employee['joined_date'] ? date('d-m-Y', strtotime($employee['joined_date'])) : '-'), 1, 0, 'L');
+    $pdf->Cell($cw5, 6, 'PAN NO.', 1, 0, 'L');
+    $pdf->Cell($cw6, 6, ' ' . ($employee['pan'] ?? '-'), 1, 1, 'L');
 
-    // Employee details (2 columns)
-    pdf_section_bar($pdf, 'Employee Details', $w);
+    // Row 2
+    $pdf->Cell($cw1, 6, 'Emp. Name', 1, 0, 'L');
+    $pdf->Cell($cw2, 6, ' ' . $employee['name'], 1, 0, 'L');
+    $pdf->Cell($cw3, 6, 'Grade', 1, 0, 'L');
+    $pdf->Cell($cw4, 6, ' ' . ($employee['grade'] ?? '-'), 1, 0, 'L');
+    $pdf->Cell($cw5, 6, 'P.F. NO.', 1, 0, 'L');
+    $pdf->Cell($cw6, 6, ' ' . ($employee['pf_no'] ?? '-'), 1, 1, 'L');
 
-    $pairs = [
-        ['Full Name', $employee['name'], 'Employee ID', $employee['emp_id']],
-        ['Department', $employee['department'] ?: '-', 'Designation', $employee['designation'] ?: '-'],
-        ['PAN', trim($employee['pan'] ?? '') ?: '-', 'Bank Account', trim($employee['bank_account'] ?? '') ?: '-'],
-    ];
+    // Row 3
+    $pdf->Cell($cw1, 6, 'Designation', 1, 0, 'L');
+    $pdf->Cell($cw2, 6, ' ' . ($employee['designation'] ?? '-'), 1, 0, 'L');
+    $pdf->Cell($cw3, 6, 'E.S.I.C. No.', 1, 0, 'L');
+    $pdf->Cell($cw4, 6, ' ' . ($employee['esic_no'] ?? '-'), 1, 0, 'L');
+    $pdf->Cell($cw5, 6, 'Bank A/c No', 1, 0, 'L');
+    $pdf->Cell($cw6, 6, ' ' . ($employee['bank_account'] ?? '-'), 1, 1, 'L');
 
-    foreach ($pairs as $pair) {
-        $y = $pdf->GetY();
-        pdf_set_draw($pdf, 226, 232, 240);
-        pdf_set_fill($pdf, 248, 250, 252);
-        pdf_set_text($pdf, 100, 116, 139);
-        $pdf->SetFont('Arial', '', 7);
-        $pdf->Cell(28, 6.5, ' ' . $pair[0], 1, 0, 'L', true);
-        pdf_set_fill($pdf, 255, 255, 255);
-        pdf_set_text($pdf, 30, 41, 59);
-        $pdf->SetFont('Arial', 'B', 8);
-        $pdf->Cell(67, 6.5, $pair[1], 1, 0, 'L');
-        pdf_set_fill($pdf, 248, 250, 252);
-        pdf_set_text($pdf, 100, 116, 139);
-        $pdf->SetFont('Arial', '', 7);
-        $pdf->Cell(28, 6.5, ' ' . $pair[2], 1, 0, 'L', true);
-        pdf_set_fill($pdf, 255, 255, 255);
-        pdf_set_text($pdf, 30, 41, 59);
-        $pdf->SetFont('Arial', 'B', 8);
-        $pdf->Cell(67, 6.5, $pair[3], 1, 1, 'L');
-        if ($pdf->GetY() <= $y) {
-            $pdf->SetY($y + 6.5);
+    // Row 4
+    $pdf->Cell($cw1, 6, 'Dept.', 1, 0, 'L');
+    $pdf->Cell($cw2, 6, ' ' . ($employee['department'] ?? '-'), 1, 0, 'L');
+    $pdf->Cell($cw3, 6, 'U.A.N. No.', 1, 0, 'L');
+    $pdf->Cell($cw4, 6, ' ' . ($employee['uan_no'] ?? '-'), 1, 0, 'L');
+    $pdf->Cell($cw5, 6, '', 1, 0, 'L');
+    $pdf->Cell($cw6, 6, '', 1, 1, 'L');
+
+    // Attendance row
+    $pdf->SetFont('Arial', 'B', 8);
+    $pdf->Cell(190, 6, 'ATTENDANCE', 1, 1, 'C');
+    $pdf->SetFont('Arial', '', 8);
+
+    $aw = 190 / 6;
+    $pdf->Cell($aw, 6, 'Present: ' . (int)$salary['present_days'], 1, 0, 'L');
+    $pdf->Cell($aw, 6, 'Absent: ' . (int)$salary['absent_days'], 1, 0, 'L');
+    $pdf->Cell($aw, 6, 'Leaves: ' . (int)($salary['leave_days'] ?? 0), 1, 0, 'L');
+    $pdf->Cell($aw, 6, 'Bal. SL: ' . (float)($leave_bals['SL'] ?? 0), 1, 0, 'L');
+    $pdf->Cell($aw, 6, 'Bal. PL: ' . (float)($leave_bals['PL'] ?? 0), 1, 0, 'L');
+    $pdf->Cell($aw, 6, 'Bal. CL: ' . (float)($leave_bals['CL'] ?? 0), 1, 1, 'L');
+
+    // Salary Table Header
+    $pdf->SetFont('Arial', 'B', 8);
+    $pdf->Cell(63.33, 6, 'EARNINGS', 1, 0, 'C');
+    $pdf->Cell(63.33, 6, 'DEDUCTIONS', 1, 0, 'C');
+    $pdf->Cell(63.34, 6, 'ADD. BENEFIT', 1, 1, 'C');
+
+    $pdf->SetFont('Arial', '', 8);
+    $startY = $pdf->GetY();
+    
+    // Max rows for earnings and deductions
+    $max_rows = max(count($breakdown['earnings']), count($breakdown['deductions']), 6);
+    
+    $y = $startY;
+    for ($i = 0; $i < $max_rows; $i++) {
+        $pdf->SetXY(10, $y);
+        
+        // Earnings
+        if (isset($breakdown['earnings'][$i])) {
+            $pdf->Cell(43.33, 5, ' ' . $breakdown['earnings'][$i]['label'], 'L', 0, 'L');
+            $pdf->Cell(20, 5, format_money($breakdown['earnings'][$i]['period']) . ' ', 'R', 0, 'R');
+        } else {
+            $pdf->Cell(63.33, 5, '', 'LR', 0, 'L');
         }
+        
+        // Deductions
+        if (isset($breakdown['deductions'][$i])) {
+            $pdf->Cell(43.33, 5, ' ' . $breakdown['deductions'][$i]['label'], 'L', 0, 'L');
+            $pdf->Cell(20, 5, format_money($breakdown['deductions'][$i]['period']) . ' ', 'R', 0, 'R');
+        } else {
+            $pdf->Cell(63.33, 5, '', 'LR', 0, 'L');
+        }
+
+        // Add benefit (Empty for now)
+        $pdf->Cell(63.34, 5, '', 'LR', 1, 'L');
+        
+        $y += 5;
     }
-
-    $pdf->Ln(3);
-
-    // Attendance summary (single row, 4 cells)
-    pdf_section_bar($pdf, 'Attendance Summary', $w);
-    $cols = [
-        ['Paid Days', format_money($salary['paid_days'] ?? 0) . ' / ' . (int) $salary['working_days']],
-        ['Present', (string) (int) $salary['present_days']],
-        ['Half / Leave', (int) ($salary['half_days'] ?? 0) . ' / ' . (int) ($salary['leave_days'] ?? 0)],
-        ['Absent', (string) (int) $salary['absent_days']],
-    ];
-    $cw = 47.5;
-    pdf_set_draw($pdf, 226, 232, 240);
-    foreach ($cols as $i => $col) {
-        pdf_set_fill($pdf, 241, 245, 249);
-        pdf_set_text($pdf, 100, 116, 139);
-        $pdf->SetFont('Arial', '', 6);
-        $pdf->Cell($cw, 5, ' ' . strtoupper($col[0]), 'LTR', 0, 'L', true);
-    }
-    $pdf->Ln(5);
-    $pdf->SetX($x);
-    foreach ($cols as $i => $col) {
-        pdf_set_fill($pdf, 255, 255, 255);
-        pdf_set_text($pdf, 30, 41, 59);
-        $pdf->SetFont('Arial', 'B', 11);
-        $border = $i === 3 ? 'LBR' : 'LTR';
-        $pdf->Cell($cw, 8, $col[1], $border, 0, 'C', true);
-    }
-    $pdf->Ln(8);
-
-    // Earnings
-    pdf_section_bar($pdf, 'Earnings', $w);
-    pdf_set_fill($pdf, 30, 41, 59);
-    pdf_set_text($pdf, 255, 255, 255);
-    $pdf->SetFont('Arial', 'B', 7);
-    pdf_set_draw($pdf, 30, 41, 59);
-    $pdf->Cell(115, 6, '  Component', 1, 0, 'L', true);
-    $pdf->Cell(25, 6, '%', 1, 0, 'C', true);
-    $pdf->Cell(50, 6, 'Amount (INR)', 1, 1, 'R', true);
-
-    foreach ($breakdown['earnings'] as $line) {
-        pdf_money_row($pdf, $line['label'], format_money($line['period']) . '   (' . $line['percent_label'] . ')');
-    }
-    pdf_money_row($pdf, 'Gross Earnings', format_money($breakdown['earnings_period_total']), ['bold' => true, 'accent' => 'earn']);
-
-    $pdf->Ln(2);
-
-    // Deductions
-    pdf_section_bar($pdf, 'Deductions', $w);
-    pdf_set_fill($pdf, 127, 29, 29);
-    pdf_set_text($pdf, 255, 255, 255);
-    $pdf->SetFont('Arial', 'B', 7);
-    pdf_set_draw($pdf, 127, 29, 29);
-    $pdf->Cell(140, 6, '  Component', 1, 0, 'L', true);
-    $pdf->Cell(50, 6, 'Amount (INR)', 1, 1, 'R', true);
-
-    foreach ($breakdown['deductions'] as $line) {
-        pdf_money_row($pdf, $line['label'] . ' (' . $line['percent_label'] . ')', '-' . format_money($line['period']), ['accent' => 'ded']);
-    }
-    pdf_money_row($pdf, 'Total Deductions', '-' . format_money($breakdown['deductions_period_total']), ['bold' => true, 'accent' => 'ded']);
-
-    $pdf->Ln(3);
-
-    // Net payable
-    pdf_set_fill($pdf, 79, 70, 229);
-    pdf_set_draw($pdf, 67, 56, 202);
-    pdf_set_text($pdf, 255, 255, 255);
-    $pdf->SetFont('Arial', 'B', 11);
-    $pdf->Cell(125, 11, '  NET PAYABLE SALARY', 1, 0, 'L', true);
-    $pdf->SetFont('Arial', 'B', 13);
-    $pdf->Cell(65, 11, 'Rs. ' . format_money($breakdown['net_period']), 1, 1, 'R', true);
-
-    $pdf->Ln(2);
-    pdf_set_text($pdf, 148, 163, 184);
-    $pdf->SetFont('Arial', 'I', 7);
-    $pdf->MultiCell(
-        $w,
-        3.5,
-        'Calculation: Gross = (Monthly base Rs.' . format_money($salary['base_salary']) . ' / ' . (int) $salary['working_days']
-        . ' working days) x paid days; net after PF, PT and other deductions. Amounts in INR.',
-        0,
-        'L'
-    );
-
-    // Signature + footer
+    
+    $pdf->SetXY(10, $y);
+    $pdf->SetFont('Arial', 'B', 8);
+    
+    // Totals
+    $pdf->Cell(43.33, 6, ' Total Earnings', 1, 0, 'L');
+    $pdf->Cell(20, 6, format_money($breakdown['earnings_period_total']) . ' ', 1, 0, 'R');
+    
+    $pdf->Cell(43.33, 6, ' Total Deductions', 1, 0, 'L');
+    $pdf->Cell(20, 6, format_money($breakdown['deductions_period_total']) . ' ', 1, 0, 'R');
+    
+    $pdf->Cell(63.34, 6, '', 1, 1, 'L');
+    
+    // Net Salary
+    $net_period_num = (float) str_replace(',', '', $breakdown['net_period']);
+    $pdf->Cell(190, 6, 'Net Salary : Rs. ' . format_money($breakdown['net_period']), 1, 1, 'L');
+    $pdf->Cell(190, 6, 'In Words : ' . numberToWordsIndian($net_period_num), 1, 1, 'L');
+    
+    $pdf->Ln(10);
+    $sigY = $pdf->GetY();
     $sigPath = payslip_signature_absolute_path($settings);
-    $authorityName = trim($settings['signature_authority_name'] ?? 'Authorized Signatory');
-    $blockY = max($pdf->GetY() + 8, 232);
-
-    if ($sigPath) {
-        $imgW = 44;
-        $imgX = $x + $w - $imgW;
-        $pdf->Image($sigPath, $imgX, $blockY, $imgW);
-        pdf_set_draw($pdf, 203, 213, 225);
-        $pdf->Line($imgX, $blockY + 15, $imgX + $imgW, $blockY + 15);
-        $pdf->SetXY($imgX, $blockY + 16);
-        pdf_set_text($pdf, 51, 65, 85);
-        $pdf->SetFont('Arial', 'B', 8);
-        $pdf->Cell($imgW, 4, $authorityName, 0, 1, 'C');
-        $pdf->SetX($imgX);
-        $pdf->SetFont('Arial', '', 7);
-        pdf_set_text($pdf, 148, 163, 184);
-        $pdf->Cell($imgW, 3, 'Authorized Signatory', 0, 1, 'C');
-
-        $pdf->SetXY($x, $blockY);
-        pdf_set_text($pdf, 148, 163, 184);
-        $pdf->SetFont('Arial', '', 7);
-        $pdf->MultiCell(130, 3.5, 'This is a system-generated payslip. Please retain for your records.', 0, 'L');
+    if ($sigPath && file_exists($sigPath)) {
+        $pdf->Image($sigPath, 42.5, $sigY, 30); // 42.5 is centered for the 95 width column (10 margin + 95/2 - 30/2)
     }
 
-    $pdf->SetY(285);
-    pdf_set_draw($pdf, 226, 232, 240);
-    $pdf->Line($x, 285, $x + $w, 285);
-    pdf_set_text($pdf, 148, 163, 184);
-    $pdf->SetFont('Arial', '', 7);
-    $pdf->SetX($x);
-    $pdf->Cell($w, 4, $company . '  |  Confidential  |  Payroll System', 0, 1, 'C');
-
+    $pdf->Ln(15);
+    $pdf->Cell(95, 6, 'Employer Signature', 0, 0, 'C');
+    $pdf->Cell(95, 6, 'Employee Signature', 0, 1, 'C');
+    
     return $pdf->Output('S');
 }
 

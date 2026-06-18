@@ -306,6 +306,9 @@ function approvals_employee($conn, $emp_id, &$cache)
                                     </div>
                                 </div>
                                 <div class="approval-leave-head-badges">
+                                    <?php if ($req['request_status'] === 'cancellation_pending'): ?>
+                                        <span class="approval-leave-type-badge" style="background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5;">Cancellation Request</span>
+                                    <?php endif; ?>
                                     <span class="approval-leave-type-badge"><?php echo htmlspecialchars($req['leave_type']); ?></span>
                                     <span class="approval-leave-duration-badge"><?php echo $days; ?> day<?php echo $days === 1 ? '' : 's'; ?></span>
                                 </div>
@@ -375,8 +378,14 @@ function approvals_employee($conn, $emp_id, &$cache)
                                         <input type="text" name="review_note" placeholder="Optional note to employee" class="approval-note-input">
                                     </label>
                                     <div class="approval-action-buttons">
-                                        <button type="submit" name="action" value="approve" class="btn btn-sm btn-success">Approve leave</button>
-                                        <button type="submit" name="action" value="reject" class="btn btn-outline btn-sm btn-danger-outline" onclick="return confirm('Reject this leave request?');">Reject</button>
+                                        <?php if ($req['request_status'] === 'cancellation_pending'): ?>
+                                            <input type="hidden" name="is_cancellation" value="1">
+                                            <button type="submit" name="action" value="approve" class="btn btn-sm btn-danger">Approve cancellation</button>
+                                            <button type="submit" name="action" value="reject" class="btn btn-outline btn-sm" onclick="return confirm('Reject this cancellation? The leave will remain approved.');">Reject cancellation</button>
+                                        <?php else: ?>
+                                            <button type="submit" name="action" value="approve" class="btn btn-sm btn-success">Approve leave</button>
+                                            <button type="submit" name="action" value="reject" class="btn btn-outline btn-sm btn-danger-outline" onclick="return confirm('Reject this leave request?');">Reject</button>
+                                        <?php endif; ?>
                                     </div>
                                 </form>
                             </footer>

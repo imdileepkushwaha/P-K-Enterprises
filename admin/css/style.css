@@ -8072,9 +8072,14 @@ button.emp-quick-card {
     color: #92400e;
 }
 
-.emp-badge.ok {
+.emp-badge.ok, .emp-badge.approved {
     background: #d1fae5;
     color: #065f46;
+}
+
+.emp-badge.rejected, .emp-badge.cancelled {
+    background: #fee2e2;
+    color: #b91c1c;
 }
 
 .emp-page-hero-slips {
@@ -8357,6 +8362,7 @@ button.emp-quick-card {
 .emp-req-pending { background: #fef3c7; color: #92400e; }
 .emp-req-approved { background: #d1fae5; color: #065f46; }
 .emp-req-rejected { background: #fee2e2; color: #991b1b; }
+.emp-req-cancelled, .emp-req-cancellation_pending { background: #fee2e2; color: #991b1b; }
 
 .emp-req-table {
     width: 100%;

@@ -87,6 +87,8 @@ if ($section === 'payroll') {
     set_setting($conn, 'pct_medical', trim($_POST['pct_medical'] ?? '5'));
     set_setting($conn, 'pct_special', trim($_POST['pct_special'] ?? '20'));
     set_setting($conn, 'pf_percent', trim($_POST['pf_percent'] ?? '12'));
+    set_setting($conn, 'pf_min_limit', trim($_POST['pf_min_limit'] ?? '0'));
+    set_setting($conn, 'pf_max_limit', trim($_POST['pf_max_limit'] ?? '15000'));
     set_setting($conn, 'professional_tax', trim($_POST['professional_tax'] ?? '200'));
     set_setting($conn, 'esi_percent', trim($_POST['esi_percent'] ?? '0.75'));
     set_setting($conn, 'esi_gross_limit', trim($_POST['esi_gross_limit'] ?? '21000'));
@@ -121,7 +123,20 @@ if ($section === 'payroll') {
     exit;
 }
 
-if ($section === 'admins') {
+if ($section === 'leave') {
+    set_setting($conn, 'leave_quota_pl', trim($_POST['leave_quota_pl'] ?? '13'));
+    set_setting($conn, 'leave_quota_sl', trim($_POST['leave_quota_sl'] ?? '9'));
+    set_setting($conn, 'leave_quota_cl', trim($_POST['leave_quota_cl'] ?? '8'));
+    set_setting($conn, 'max_leaves_per_month', trim($_POST['max_leaves_per_month'] ?? '4'));
+    set_setting($conn, 'max_wo_per_month', trim($_POST['max_wo_per_month'] ?? '4'));
+
+    $_SESSION['flash_message'] = 'Leave and attendance rules saved.';
+    $_SESSION['flash_success'] = true;
+    header('Location: settings.php?tab=leave');
+    exit;
+}
+
+if ($section === 'admin_add') {
     if (!is_super_admin()) {
         $_SESSION['flash_message'] = 'Only Head Office can manage administrator accounts.';
         $_SESSION['flash_success'] = false;

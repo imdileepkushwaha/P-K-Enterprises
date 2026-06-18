@@ -57,9 +57,10 @@ if ($type === 'profile') {
         ? approve_attendance_request($conn, $request_id, $reviewer, $note)
         : reject_attendance_request($conn, $request_id, $reviewer, $note);
 } elseif ($type === 'leave') {
+    $is_cancellation = !empty($_POST['is_cancellation']);
     $stmt = $conn->prepare('SELECT branch_id FROM employee_leave_requests WHERE id = ? AND request_status = ?');
-    $pending = 'pending';
-    $stmt->bind_param('is', $request_id, $pending);
+    $status_expected = $is_cancellation ? 'cancellation_pending' : 'pending';
+    $stmt->bind_param('is', $request_id, $status_expected);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row || ($branch_filter !== null && (int) $row['branch_id'] !== $branch_filter)) {
@@ -68,9 +69,15 @@ if ($type === 'profile') {
         header('Location: approvals.php');
         exit;
     }
-    $result = $action === 'approve'
-        ? approve_leave_request($conn, $request_id, $reviewer, $note)
-        : reject_leave_request($conn, $request_id, $reviewer, $note);
+    if ($is_cancellation) {
+        $result = $action === 'approve'
+            ? approve_leave_cancellation($conn, $request_id, $reviewer, $note)
+            : reject_leave_cancellation($conn, $request_id, $reviewer, $note);
+    } else {
+        $result = $action === 'approve'
+            ? approve_leave_request($conn, $request_id, $reviewer, $note)
+            : reject_leave_request($conn, $request_id, $reviewer, $note);
+    }
 } else {
     $_SESSION['flash_message'] = 'Unknown request type.';
     $_SESSION['flash_success'] = false;

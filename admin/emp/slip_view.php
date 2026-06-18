@@ -24,7 +24,7 @@ if (!employee_slip_already_sent($conn, $employee['emp_id'], $year, $month)) {
 
 $settings = get_all_settings($conn);
 $salary = calculate_employee_salary_full($conn, $employee, $year, $month, $settings);
-$pdf = generate_salary_slip_pdf($employee, $salary, $settings, $year, $month);
+$pdf = generate_salary_slip_pdf($conn, $employee, $salary, $settings, $year, $month);
 $filename = salary_slip_pdf_filename($employee, $year, $month);
 
 header('Content-Type: application/pdf');

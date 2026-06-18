@@ -33,6 +33,10 @@ if ($action === 'add') {
     $bank_account = trim($_POST['bank_account'] ?? '');
     $bank_ifsc = trim($_POST['bank_ifsc'] ?? '');
     $bank_name = trim($_POST['bank_name'] ?? '');
+    $grade = trim($_POST['grade'] ?? '');
+    $esic_no = trim($_POST['esic_no'] ?? '');
+    $uan_no = trim($_POST['uan_no'] ?? '');
+    $pf_no = trim($_POST['pf_no'] ?? '');
     $joined_date = parse_joined_date_from_post($_POST['joined_date'] ?? '');
 
     if ($emp_id === '' || $name === '') {
@@ -44,16 +48,16 @@ if ($action === 'add') {
 
     if ($joined_date === null) {
         $stmt = $conn->prepare("
-            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, grade, esic_no, uan_no, pf_no, joined_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ");
-        $stmt->bind_param('sisssssdssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name);
+        $stmt->bind_param('sisssssdssssssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $grade, $esic_no, $uan_no, $pf_no);
     } else {
         $stmt = $conn->prepare("
-            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, joined_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO employees (emp_id, branch_id, name, email, phone, department, designation, base_salary, pan, bank_account, bank_ifsc, bank_name, grade, esic_no, uan_no, pf_no, joined_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->bind_param('sisssssdsssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $joined_date);
+        $stmt->bind_param('sisssssdsssssssss', $emp_id, $write_branch_id, $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $grade, $esic_no, $uan_no, $pf_no, $joined_date);
     }
 
     if ($stmt->execute()) {
@@ -84,20 +88,24 @@ if ($action === 'update') {
     $bank_account = trim($_POST['bank_account'] ?? '');
     $bank_ifsc = trim($_POST['bank_ifsc'] ?? '');
     $bank_name = trim($_POST['bank_name'] ?? '');
+    $grade = trim($_POST['grade'] ?? '');
+    $esic_no = trim($_POST['esic_no'] ?? '');
+    $uan_no = trim($_POST['uan_no'] ?? '');
+    $pf_no = trim($_POST['pf_no'] ?? '');
     $joined_date = parse_joined_date_from_post($_POST['joined_date'] ?? '');
 
     if ($joined_date === null) {
         $stmt = $conn->prepare("
-            UPDATE employees SET name=?, email=?, phone=?, department=?, designation=?, base_salary=?, pan=?, bank_account=?, bank_ifsc=?, bank_name=?, joined_date=NULL
+            UPDATE employees SET name=?, email=?, phone=?, department=?, designation=?, base_salary=?, pan=?, bank_account=?, bank_ifsc=?, bank_name=?, grade=?, esic_no=?, uan_no=?, pf_no=?, joined_date=NULL
             WHERE emp_id=?
         ");
-        $stmt->bind_param('sssssdsssss', $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $emp_id);
+        $stmt->bind_param('sssssdsssssssss', $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $grade, $esic_no, $uan_no, $pf_no, $emp_id);
     } else {
         $stmt = $conn->prepare("
-            UPDATE employees SET name=?, email=?, phone=?, department=?, designation=?, base_salary=?, pan=?, bank_account=?, bank_ifsc=?, bank_name=?, joined_date=?
+            UPDATE employees SET name=?, email=?, phone=?, department=?, designation=?, base_salary=?, pan=?, bank_account=?, bank_ifsc=?, bank_name=?, grade=?, esic_no=?, uan_no=?, pf_no=?, joined_date=?
             WHERE emp_id=?
         ");
-        $stmt->bind_param('sssssdssssss', $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $joined_date, $emp_id);
+        $stmt->bind_param('sssssdssssssssss', $name, $email, $phone, $department, $designation, $base_salary, $pan, $bank_account, $bank_ifsc, $bank_name, $grade, $esic_no, $uan_no, $pf_no, $joined_date, $emp_id);
     }
 
     if ($stmt->execute()) {

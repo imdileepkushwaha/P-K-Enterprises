@@ -251,6 +251,10 @@ function sum_adjustments_by_kind(array $adjustments)
 
 function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings = [])
 {
+    if (function_exists('accrue_monthly_leaves')) {
+        accrue_monthly_leaves($conn, $settings, $year, $month);
+    }
+
     $stmt = $conn->prepare("
         SELECT attendance_date, status, leave_type, overtime_hours FROM attendance
         WHERE emp_id = ? AND YEAR(attendance_date) = ? AND MONTH(attendance_date) = ?
@@ -300,22 +304,51 @@ function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings 
     $roster_weekoff_days = (int) ($roster_info['weekoff_days'] ?? 0);
     $roster_weekoff_credit = (float) ($roster_info['weekoff_paid_credit'] ?? 0);
 
+    $max_leaves = (int) ($settings['max_leaves_per_month'] ?? 4);
+    $max_wos = (int) ($settings['max_wo_per_month'] ?? 4);
+
     $paid_leave_credit = 0.0;
+    $leave_counted = 0;
     foreach ($leave_by_type as $code => $count) {
-        $paid_leave_credit += $count * get_leave_type_credit($conn, $code, $settings);
+        $credit_per_day = get_leave_type_credit($conn, $code, $settings);
+        for ($i=0; $i<$count; $i++) {
+            if ($max_leaves === 0 || $leave_counted < $max_leaves) {
+                $paid_leave_credit += $credit_per_day;
+                $leave_counted++;
+            } else {
+                $absent_days++;
+            }
+        }
     }
     if ($leave_days > 0 && $paid_leave_credit === 0.0) {
-        $paid_leave_credit = $leave_days * get_leave_day_credit($settings);
+        $actual_paid = ($max_leaves === 0) ? $leave_days : min($leave_days, $max_leaves);
+        $paid_leave_credit = $actual_paid * get_leave_day_credit($settings);
+        if ($max_leaves > 0 && $leave_days > $max_leaves) {
+            $absent_days += ($leave_days - $max_leaves);
+        }
     }
 
     $half_credit = get_half_day_credit($settings);
     $weekoff_credit = get_weekoff_day_credit($settings);
+    
+    $total_wos = $weekoff_days + $roster_weekoff_days;
+    $total_wo_credit = ((float) $weekoff_days * $weekoff_credit) + $roster_weekoff_credit;
+    
+    if ($max_wos > 0 && $total_wos > $max_wos) {
+        $excess_wos = $total_wos - $max_wos;
+        $absent_days += $excess_wos;
+        
+        $max_wo_credit = $max_wos * $weekoff_credit;
+        if ($total_wo_credit > $max_wo_credit) {
+            $total_wo_credit = $max_wo_credit;
+        }
+    }
+
     $paid_days = round(
         (float) $present_days
         + (float) $half_days * $half_credit
         + $paid_leave_credit
-        + (float) $weekoff_days * $weekoff_credit
-        + $roster_weekoff_credit,
+        + $total_wo_credit,
         2
     );
 
@@ -456,7 +489,7 @@ function send_single_salary_slip($conn, $employee, $year, $month, $settings, $ma
     $salary = calculate_employee_salary_full($conn, $employee, $year, $month, $settings);
     $subject = 'Salary Slip - ' . $period . ' - ' . $employee['name'];
     $email_html = render_salary_slip_email_html($employee, $salary, $settings, $year, $month);
-    $pdf_binary = generate_salary_slip_pdf($employee, $salary, $settings, $year, $month);
+    $pdf_binary = generate_salary_slip_pdf($conn, $employee, $salary, $settings, $year, $month);
     $pdf_filename = salary_slip_pdf_filename($employee, $year, $month);
 
     $ok = $mailer->send($employee['email'], $employee['name'], $subject, $email_html, $pdf_binary, $pdf_filename);
@@ -476,4 +509,56 @@ function send_single_salary_slip($conn, $employee, $year, $month, $settings, $ma
     $log->execute();
 
     return ['success' => $ok, 'salary' => $salary, 'error' => $ok ? null : $mailer->getLastError()];
+}
+
+/* ---------- Leave Management ---------- */
+
+function get_employee_leave_balances($conn, $emp_id, $settings)
+{
+    $balances = [
+        'PL' => 0.00,
+        'SL' => (float) ($settings['leave_quota_sl'] ?? 9),
+        'CL' => (float) ($settings['leave_quota_cl'] ?? 8),
+    ];
+    $stmt = $conn->prepare("SELECT leave_type, balance FROM employee_leave_balances WHERE emp_id = ?");
+    $stmt->bind_param('s', $emp_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $has_db_balance = [];
+    while ($row = $res->fetch_assoc()) {
+        $balances[$row['leave_type']] = (float) $row['balance'];
+        $has_db_balance[$row['leave_type']] = true;
+    }
+    // Initialize SL/CL if not in DB
+    foreach (['SL', 'CL'] as $lt) {
+        if (!isset($has_db_balance[$lt])) {
+            $stmt = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
+            $stmt->bind_param('ssd', $emp_id, $lt, $balances[$lt]);
+            $stmt->execute();
+        }
+    }
+    return $balances;
+}
+
+function accrue_monthly_leaves($conn, $settings, $year, $month)
+{
+    // Ignore passed year/month. Use current system date.
+    $current_year = (int)date('Y');
+    $current_month = (int)date('n');
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO leave_accruals_log (period_year, period_month) VALUES (?, ?)");
+    $stmt->bind_param('ii', $current_year, $current_month);
+    $stmt->execute();
+    
+    // If affected_rows > 0, it means we just inserted it for the first time
+    if ($stmt->affected_rows > 0) {
+        $pl_yearly = (float) ($settings['leave_quota_pl'] ?? 13);
+        $pl_monthly = round($pl_yearly / 12, 2);
+        
+        $conn->query("
+            INSERT INTO employee_leave_balances (emp_id, leave_type, balance)
+            SELECT emp_id, 'PL', {$pl_monthly} FROM employees WHERE is_active = 1
+            ON DUPLICATE KEY UPDATE balance = balance + {$pl_monthly}
+        ");
+    }
 }

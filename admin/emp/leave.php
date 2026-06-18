@@ -2,11 +2,14 @@
 require __DIR__ . '/includes/header.php';
 require_once __DIR__ . '/../includes/settings_helper.php';
 require_once __DIR__ . '/../includes/attendance_helper.php';
+require_once __DIR__ . '/../includes/payroll_extensions.php';
 require_once __DIR__ . '/includes/period.php';
 
 $settings = get_all_settings($conn);
 $emp_id = $employee['emp_id'];
 [$year, $month] = emp_parse_period();
+
+$leave_balances = get_employee_leave_balances($conn, $emp_id, $settings);
 
 $period_label = get_period_label($year, $month);
 $leave_types = get_leave_types($conn);
@@ -85,6 +88,23 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
                 </div>
             </div>
             <div class="emp-request-panel-body">
+                <div class="emp-quota-meter" style="margin-bottom: 24px;">
+                    <h4 style="margin: 0 0 12px; font-size: 14px;">Leave Balances</h4>
+                    <div style="display: flex; gap: 12px; font-size: 13px;">
+                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">PL</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['PL'] ?? '0'); ?></div>
+                        </div>
+                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">SL</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['SL'] ?? '0'); ?></div>
+                        </div>
+                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">CL</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['CL'] ?? '0'); ?></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="emp-quota-meter">
                     <div class="emp-quota-meter-top">
                         <span>Applications for <?php echo htmlspecialchars($period_label); ?></span>
@@ -117,11 +137,11 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
                     <div class="emp-request-fields">
                         <div class="form-group">
                             <label for="empLeaveFrom">From date</label>
-                            <input type="date" id="empLeaveFrom" name="from_date" required value="<?php echo htmlspecialchars($default_from); ?>" <?php echo $leave_form_disabled ? 'disabled' : ''; ?>>
+                            <input type="date" id="empLeaveFrom" name="from_date" required min="<?php echo date('Y-m-d'); ?>" value="<?php echo htmlspecialchars($default_from); ?>" <?php echo $leave_form_disabled ? 'disabled' : ''; ?>>
                         </div>
                         <div class="form-group">
                             <label for="empLeaveTo">To date</label>
-                            <input type="date" id="empLeaveTo" name="to_date" required value="<?php echo htmlspecialchars($default_from); ?>" <?php echo $leave_form_disabled ? 'disabled' : ''; ?>>
+                            <input type="date" id="empLeaveTo" name="to_date" required min="<?php echo date('Y-m-d'); ?>" value="<?php echo htmlspecialchars($default_from); ?>" <?php echo $leave_form_disabled ? 'disabled' : ''; ?>>
                             <span class="form-hint" id="empLeaveDayCount"></span>
                         </div>
                         <div class="form-group">
@@ -222,6 +242,7 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
                                     <th>Type</th>
                                     <th>Status</th>
                                     <th>Submitted</th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -238,12 +259,22 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
                                         </td>
                                         <td><?php echo $days; ?></td>
                                         <td><span class="att-legend-item att-code-l"><?php echo htmlspecialchars($req['leave_type']); ?></span></td>
-                                        <td><span class="emp-req-status emp-req-<?php echo htmlspecialchars($req['request_status']); ?>"><?php echo htmlspecialchars(ucfirst($req['request_status'])); ?></span></td>
+                                        <td><span class="emp-req-status emp-req-<?php echo htmlspecialchars($req['request_status']); ?>"><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $req['request_status']))); ?></span></td>
                                         <td><?php echo date('d M Y, h:i A', strtotime($req['created_at'])); ?></td>
+                                        <td>
+                                            <?php if ($req['request_status'] === 'pending' || $req['request_status'] === 'approved'): ?>
+                                                <form method="POST" action="leave_cancel_save.php" style="margin:0; display:inline;" onsubmit="event.preventDefault(); openCancelModal(this);">
+                                                    <?php echo csrf_field(); ?>
+                                                    <input type="hidden" name="request_id" value="<?php echo (int)$req['id']; ?>">
+                                                    <input type="hidden" name="redirect" value="leave.php?<?php echo $period_query; ?>">
+                                                    <button type="submit" class="btn" style="padding: 4px 8px; font-size: 12px; background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5;">Cancel</button>
+                                                </form>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                     <?php if (!empty($req['employee_note'])): ?>
                                     <tr class="emp-leave-note-row">
-                                        <td colspan="5"><em><?php echo htmlspecialchars($req['employee_note']); ?></em></td>
+                                        <td colspan="6"><em><?php echo htmlspecialchars($req['employee_note']); ?></em></td>
                                     </tr>
                                     <?php endif; ?>
                                 <?php endforeach; ?>
@@ -255,7 +286,45 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
         </div>
     </div>
 </div>
+
+<!-- Cancel Leave Modal -->
+<div id="cancelLeaveModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 9999;">
+    <div style="background: #fff; padding: 24px; border-radius: 12px; width: 400px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.2); text-align: center; animation: modalPop 0.2s ease-out;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; background: #fee2e2; color: #ef4444; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+            <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <h3 style="margin: 0 0 8px; font-size: 1.25rem; font-weight: 600; color: #111827;">Cancel Leave Request?</h3>
+        <p style="margin: 0 0 24px; color: #4b5563; font-size: 0.95rem; line-height: 1.5;">Are you sure you want to cancel this leave request? This action cannot be undone.</p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+            <button type="button" class="btn btn-outline" onclick="closeCancelModal()" style="flex: 1; padding: 10px; font-weight: 500;">No, keep it</button>
+            <button type="button" class="btn" id="confirmCancelBtn" style="flex: 1; padding: 10px; font-weight: 500; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer;">Yes, cancel it</button>
+        </div>
+    </div>
+</div>
+<style>
+@keyframes modalPop {
+    0% { transform: scale(0.95); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+#confirmCancelBtn:hover { background: #dc2626 !important; }
+</style>
+
 <script>
+var cancelFormToSubmit = null;
+function openCancelModal(formElement) {
+    cancelFormToSubmit = formElement;
+    document.getElementById('cancelLeaveModal').style.display = 'flex';
+}
+function closeCancelModal() {
+    document.getElementById('cancelLeaveModal').style.display = 'none';
+    cancelFormToSubmit = null;
+}
+document.getElementById('confirmCancelBtn').addEventListener('click', function() {
+    if (cancelFormToSubmit) {
+        cancelFormToSubmit.submit();
+    }
+});
+
 (function () {
     var from = document.getElementById('empLeaveFrom');
     var to = document.getElementById('empLeaveTo');

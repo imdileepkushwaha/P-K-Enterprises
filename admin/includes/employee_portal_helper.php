@@ -306,6 +306,9 @@ function create_employee_leave_request($conn, $emp_id, $branch_id, $from_date, $
     if ($from_date > $to_date) {
         return ['ok' => false, 'message' => 'From date cannot be after to date.'];
     }
+    if ($from_date < date('Y-m-d')) {
+        return ['ok' => false, 'message' => 'Backdated leave applications are not allowed. Please select today or a future date.'];
+    }
 
     $days = leave_request_day_count($from_date, $to_date);
     if ($days < 1) {
@@ -366,7 +369,7 @@ function count_pending_approvals_for_branch($conn, $branch_id = null)
 {
     $profile_sql = "SELECT COUNT(*) AS c FROM employee_profile_requests WHERE request_status = 'pending'";
     $att_sql = "SELECT COUNT(*) AS c FROM employee_attendance_requests WHERE request_status = 'pending'";
-    $leave_sql = "SELECT COUNT(*) AS c FROM employee_leave_requests WHERE request_status = 'pending'";
+    $leave_sql = "SELECT COUNT(*) AS c FROM employee_leave_requests WHERE request_status IN ('pending', 'cancellation_pending')";
     $types = '';
     $params = [];
 
@@ -524,6 +527,25 @@ function approve_attendance_request($conn, $request_id, $reviewer, $note = '')
     $mark->bind_param('ssi', $reviewer, $note, $request_id);
     $mark->execute();
 
+    if ($req['status'] === 'Leave' && !empty($leave_type)) {
+        require_once __DIR__ . '/settings_helper.php';
+        $chk = $conn->prepare("SELECT balance FROM employee_leave_balances WHERE emp_id = ? AND leave_type = ?");
+        $chk->bind_param('ss', $req['emp_id'], $leave_type);
+        $chk->execute();
+        if (!$chk->get_result()->fetch_assoc()) {
+            $settings = get_all_settings($conn);
+            $default_bal = 0.0;
+            if ($leave_type === 'SL') $default_bal = (float)($settings['leave_quota_sl'] ?? 9);
+            elseif ($leave_type === 'CL') $default_bal = (float)($settings['leave_quota_cl'] ?? 8);
+            $ins = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
+            $ins->bind_param('ssd', $req['emp_id'], $leave_type, $default_bal);
+            $ins->execute();
+        }
+        $deduct = $conn->prepare('UPDATE employee_leave_balances SET balance = balance - 1 WHERE emp_id = ? AND leave_type = ?');
+        $deduct->bind_param('ss', $req['emp_id'], $leave_type);
+        $deduct->execute();
+    }
+
     return ['ok' => true, 'message' => 'Attendance approved and saved.'];
 }
 
@@ -549,7 +571,7 @@ function get_pending_leave_requests($conn, $branch_id = null)
         SELECT r.*, e.name AS employee_name
         FROM employee_leave_requests r
         INNER JOIN employees e ON e.emp_id = r.emp_id
-        WHERE r.request_status = 'pending'
+        WHERE r.request_status IN ('pending', 'cancellation_pending')
     ";
     if ($branch_id !== null) {
         $sql .= ' AND r.branch_id = ?';
@@ -557,6 +579,25 @@ function get_pending_leave_requests($conn, $branch_id = null)
         $stmt->bind_param('i', $branch_id);
     } else {
         $stmt = $conn->prepare($sql . ' ORDER BY r.created_at ASC');
+    }
+    $stmt->execute();
+    return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+}
+
+function get_all_leave_requests_with_names($conn, $branch_id = null)
+{
+    $sql = "
+        SELECT r.*, e.name AS employee_name
+        FROM employee_leave_requests r
+        INNER JOIN employees e ON e.emp_id = r.emp_id
+    ";
+    
+    if ($branch_id !== null) {
+        $sql .= ' WHERE r.branch_id = ?';
+        $stmt = $conn->prepare($sql . ' ORDER BY r.created_at DESC');
+        $stmt->bind_param('i', $branch_id);
+    } else {
+        $stmt = $conn->prepare($sql . ' ORDER BY r.created_at DESC');
     }
     $stmt->execute();
     return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -602,6 +643,27 @@ function approve_leave_request($conn, $request_id, $reviewer, $note = '')
     $note = trim((string) $note);
     $mark->bind_param('ssi', $reviewer, $note, $request_id);
     $mark->execute();
+
+    $days = count($dates);
+    if ($days > 0 && !empty($leave_type)) {
+        require_once __DIR__ . '/settings_helper.php';
+        $chk = $conn->prepare("SELECT balance FROM employee_leave_balances WHERE emp_id = ? AND leave_type = ?");
+        $chk->bind_param('ss', $req['emp_id'], $leave_type);
+        $chk->execute();
+        if (!$chk->get_result()->fetch_assoc()) {
+            $settings = get_all_settings($conn);
+            $default_bal = 0.0;
+            if ($leave_type === 'SL') $default_bal = (float)($settings['leave_quota_sl'] ?? 9);
+            elseif ($leave_type === 'CL') $default_bal = (float)($settings['leave_quota_cl'] ?? 8);
+            $ins = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
+            $ins->bind_param('ssd', $req['emp_id'], $leave_type, $default_bal);
+            $ins->execute();
+        }
+        $deduct = $conn->prepare('UPDATE employee_leave_balances SET balance = balance - ? WHERE emp_id = ? AND leave_type = ?');
+        $deduct_days = (float) $days;
+        $deduct->bind_param('dss', $deduct_days, $req['emp_id'], $leave_type);
+        $deduct->execute();
+    }
 
     $days = count($dates);
     return ['ok' => true, 'message' => 'Leave approved — ' . $days . ' day(s) marked on attendance calendar.'];
@@ -723,4 +785,65 @@ function profile_request_field_diffs(array $employee, array $request)
         }
     }
     return $diffs;
+}
+
+function approve_leave_cancellation($conn, $request_id, $reviewer, $note = '')
+{
+    $stmt = $conn->prepare("SELECT * FROM employee_leave_requests WHERE id = ? AND request_status = 'cancellation_pending'");
+    $stmt->bind_param('i', $request_id);
+    $stmt->execute();
+    $req = $stmt->get_result()->fetch_assoc();
+    if (!$req) {
+        return ['ok' => false, 'message' => 'Cancellation request not found or already processed.'];
+    }
+
+    $dates = leave_request_dates_in_range($req['from_date'], $req['to_date']);
+    foreach ($dates as $date) {
+        $year = (int) date('Y', strtotime($date));
+        $month = (int) date('n', strtotime($date));
+        if (is_payroll_period_locked($conn, $year, $month, (int) $req['branch_id'])) {
+            return ['ok' => false, 'message' => 'Payroll period is locked for ' . get_period_label($year, $month) . '. Reopen before approving cancellation.'];
+        }
+    }
+
+    $del = $conn->prepare("DELETE FROM attendance WHERE emp_id = ? AND attendance_date = ? AND status = 'Leave'");
+    foreach ($dates as $date) {
+        $del->bind_param('ss', $req['emp_id'], $date);
+        $del->execute();
+    }
+
+    $days = count($dates);
+    if ($days > 0 && !empty($req['leave_type'])) {
+        $restore = $conn->prepare('UPDATE employee_leave_balances SET balance = balance + ? WHERE emp_id = ? AND leave_type = ?');
+        $restore_days = (float) $days;
+        $restore->bind_param('dss', $restore_days, $req['emp_id'], $req['leave_type']);
+        $restore->execute();
+    }
+
+    $mark = $conn->prepare("
+        UPDATE employee_leave_requests
+        SET request_status = 'cancelled', reviewed_by = ?, reviewed_at = NOW(), review_note = ?
+        WHERE id = ?
+    ");
+    $note = trim((string) $note);
+    $mark->bind_param('ssi', $reviewer, $note, $request_id);
+    $mark->execute();
+
+    return ['ok' => true, 'message' => 'Leave cancellation approved. Balance restored and calendar cleared.'];
+}
+
+function reject_leave_cancellation($conn, $request_id, $reviewer, $note = '')
+{
+    $stmt = $conn->prepare("
+        UPDATE employee_leave_requests
+        SET request_status = 'approved', reviewed_by = ?, reviewed_at = NOW(), review_note = ?
+        WHERE id = ? AND request_status = 'cancellation_pending'
+    ");
+    $note = trim((string) $note);
+    $stmt->bind_param('ssi', $reviewer, $note, $request_id);
+    $stmt->execute();
+    if ($stmt->affected_rows < 1) {
+        return ['ok' => false, 'message' => 'Cancellation request not found or already processed.'];
+    }
+    return ['ok' => true, 'message' => 'Leave cancellation rejected. The leave remains approved.'];
 }

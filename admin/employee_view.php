@@ -688,6 +688,26 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label for="ev_edit_grade">Grade</label>
+                        <input type="text" name="grade" id="ev_edit_grade" value="<?php echo htmlspecialchars($employee['grade'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="ev_edit_pf_no">P.F. No.</label>
+                        <input type="text" name="pf_no" id="ev_edit_pf_no" value="<?php echo htmlspecialchars($employee['pf_no'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ev_edit_esic_no">E.S.I.C. No.</label>
+                        <input type="text" name="esic_no" id="ev_edit_esic_no" value="<?php echo htmlspecialchars($employee['esic_no'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="ev_edit_uan_no">U.A.N. No.</label>
+                        <input type="text" name="uan_no" id="ev_edit_uan_no" value="<?php echo htmlspecialchars($employee['uan_no'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
                         <label for="ev_edit_joined_date">Joined Date</label>
                         <input type="date" name="joined_date" id="ev_edit_joined_date" value="<?php echo htmlspecialchars($joined_date_value); ?>">
                     </div>

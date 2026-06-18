@@ -249,6 +249,10 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                                 'bank_name' => $emp['bank_name'] ?? '',
                                 'bank_account' => $emp['bank_account'] ?? '',
                                 'bank_ifsc' => $emp['bank_ifsc'] ?? '',
+                                'grade' => $emp['grade'] ?? '',
+                                'esic_no' => $emp['esic_no'] ?? '',
+                                'uan_no' => $emp['uan_no'] ?? '',
+                                'pf_no' => $emp['pf_no'] ?? '',
                             ]), ENT_QUOTES, 'UTF-8'); ?>">
                                 <td>
                                     <div class="cell-employee">
@@ -469,6 +473,14 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                     <div class="form-group"><label for="bank_account">Account</label><input type="text" name="bank_account" id="bank_account"></div>
                     <div class="form-group"><label for="bank_ifsc">IFSC</label><input type="text" name="bank_ifsc" id="bank_ifsc"></div>
                 </div>
+                <div class="form-row">
+                    <div class="form-group"><label for="grade">Grade</label><input type="text" name="grade" id="grade"></div>
+                    <div class="form-group"><label for="pf_no">P.F. No.</label><input type="text" name="pf_no" id="pf_no"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label for="esic_no">E.S.I.C. No.</label><input type="text" name="esic_no" id="esic_no"></div>
+                    <div class="form-group"><label for="uan_no">U.A.N. No.</label><input type="text" name="uan_no" id="uan_no"></div>
+                </div>
             </div>
         </div>
         <div class="modal-foot">
@@ -541,6 +553,26 @@ $email_pct = $active_count > 0 ? round(($with_email_active / $active_count) * 10
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label for="edit_grade">Grade</label>
+                        <input type="text" name="grade" id="edit_grade">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_pf_no">P.F. No.</label>
+                        <input type="text" name="pf_no" id="edit_pf_no">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit_esic_no">E.S.I.C. No.</label>
+                        <input type="text" name="esic_no" id="edit_esic_no">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_uan_no">U.A.N. No.</label>
+                        <input type="text" name="uan_no" id="edit_uan_no">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
                         <label for="edit_base_salary">Base Salary (₹) <span class="req">*</span></label>
                         <div class="input-prefix-wrap">
                             <span class="input-prefix">₹</span>
@@ -607,6 +639,10 @@ function openEditEmployee(btn) {
     document.getElementById('edit_bank_name').value = emp.bank_name || '';
     document.getElementById('edit_bank_account').value = emp.bank_account || '';
     document.getElementById('edit_bank_ifsc').value = emp.bank_ifsc || '';
+    document.getElementById('edit_grade').value = emp.grade || '';
+    document.getElementById('edit_esic_no').value = emp.esic_no || '';
+    document.getElementById('edit_uan_no').value = emp.uan_no || '';
+    document.getElementById('edit_pf_no').value = emp.pf_no || '';
     document.getElementById('editEmployeeModal').showModal();
 }
 

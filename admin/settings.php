@@ -39,6 +39,11 @@ $tab_meta = [
         'desc' => 'Company info and salary calculation settings.',
         'icon' => '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
     ],
+    'leave' => [
+        'title' => 'Leave & Attendance',
+        'desc' => 'Manage leave quotas and monthly limits.',
+        'icon' => '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+    ],
     'admins' => [
         'title' => 'Admin Users',
         'desc' => 'Manage who can access this panel.',
@@ -269,6 +274,10 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                     </div>
                     <div class="form-row">
                         <div class="form-group"><label>PF % of Basic</label><input type="number" name="pf_percent" step="0.1" min="0" max="30" value="<?php echo htmlspecialchars($settings['pf_percent'] ?? '12'); ?>"></div>
+                        <div class="form-group"><label>PF Basic Min Limit (₹)</label><input type="number" name="pf_min_limit" step="1" min="0" value="<?php echo htmlspecialchars($settings['pf_min_limit'] ?? '0'); ?>"><span class="form-hint">0 for no limit</span></div>
+                        <div class="form-group"><label>PF Basic Max Limit (₹)</label><input type="number" name="pf_max_limit" step="1" min="0" value="<?php echo htmlspecialchars($settings['pf_max_limit'] ?? '15000'); ?>"><span class="form-hint">0 for no limit</span></div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group"><label>Professional tax (₹)</label><input type="number" name="professional_tax" step="1" min="0" value="<?php echo htmlspecialchars($settings['professional_tax'] ?? '200'); ?>"></div>
                         <div class="form-group"><label>ESI %</label><input type="number" name="esi_percent" step="0.01" min="0" max="5" value="<?php echo htmlspecialchars($settings['esi_percent'] ?? '0.75'); ?>"></div>
                         <div class="form-group"><label>ESI if gross ≤</label><input type="number" name="esi_gross_limit" step="1" min="0" value="<?php echo htmlspecialchars($settings['esi_gross_limit'] ?? '21000'); ?>"></div>
@@ -328,6 +337,49 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                     <button type="submit" class="btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                         Save Payroll Settings
+                    </button>
+                </div>
+            </form>
+            <?php endif; ?>
+
+            <?php if ($tab === 'leave'): ?>
+            <form method="POST" action="settings_save.php" class="settings-form">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="section" value="leave">
+                <div class="settings-form-section">
+                    <h4>Leave &amp; Attendance Quotas</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Yearly PL Quota</label>
+                            <input type="number" name="leave_quota_pl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_pl'] ?? '13'); ?>">
+                            <span class="form-hint">Accrues 1.08 per month</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Yearly SL Quota</label>
+                            <input type="number" name="leave_quota_sl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_sl'] ?? '9'); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label>Yearly CL Quota</label>
+                            <input type="number" name="leave_quota_cl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_cl'] ?? '8'); ?>">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Max Leaves Per Month</label>
+                            <input type="number" name="max_leaves_per_month" step="1" min="0" value="<?php echo htmlspecialchars($settings['max_leaves_per_month'] ?? '4'); ?>">
+                            <span class="form-hint">Leaves beyond this are unpaid</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Max Week Offs Per Month</label>
+                            <input type="number" name="max_wo_per_month" step="1" min="0" value="<?php echo htmlspecialchars($settings['max_wo_per_month'] ?? '4'); ?>">
+                            <span class="form-hint">WOs beyond this are unpaid</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-form-actions">
+                    <button type="submit" class="btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Save Leave Settings
                     </button>
                 </div>
             </form>

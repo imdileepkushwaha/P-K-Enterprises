@@ -175,6 +175,22 @@ function ensure_database_schema($conn)
             KEY `branch_status` (`branch_id`, `request_status`),
             KEY `emp_dates` (`emp_id`, `from_date`, `to_date`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS `employee_leave_balances` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `emp_id` varchar(50) NOT NULL,
+            `leave_type` varchar(10) NOT NULL,
+            `balance` decimal(5,2) NOT NULL DEFAULT 0.00,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `emp_leave` (`emp_id`, `leave_type`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS `leave_accruals_log` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `period_year` smallint NOT NULL,
+            `period_month` tinyint NOT NULL,
+            `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `period` (`period_year`, `period_month`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 
     foreach ($tables as $sql) {
@@ -194,6 +210,10 @@ function ensure_database_schema($conn)
         'bank_account' => "ALTER TABLE `employees` ADD COLUMN `bank_account` varchar(40) DEFAULT NULL",
         'bank_ifsc' => "ALTER TABLE `employees` ADD COLUMN `bank_ifsc` varchar(20) DEFAULT NULL",
         'bank_name' => "ALTER TABLE `employees` ADD COLUMN `bank_name` varchar(100) DEFAULT NULL",
+        'grade' => "ALTER TABLE `employees` ADD COLUMN `grade` varchar(50) DEFAULT NULL",
+        'esic_no' => "ALTER TABLE `employees` ADD COLUMN `esic_no` varchar(50) DEFAULT NULL",
+        'uan_no' => "ALTER TABLE `employees` ADD COLUMN `uan_no` varchar(50) DEFAULT NULL",
+        'pf_no' => "ALTER TABLE `employees` ADD COLUMN `pf_no` varchar(50) DEFAULT NULL",
     ];
 
     foreach ($employee_columns as $column => $sql) {
@@ -377,6 +397,8 @@ function seed_default_settings($conn)
         'pct_medical' => '5',
         'pct_special' => '20',
         'pf_percent' => '12',
+        'pf_min_limit' => '0',
+        'pf_max_limit' => '15000',
         'professional_tax' => '200',
         'esi_percent' => '0.75',
         'esi_gross_limit' => '21000',
@@ -389,6 +411,11 @@ function seed_default_settings($conn)
         'employee_attendance_requests_per_month' => '3',
         'employee_leave_requests_per_month' => '5',
         'default_employee_portal_password' => 'Emp@123',
+        'leave_quota_pl' => '13',
+        'leave_quota_sl' => '9',
+        'leave_quota_cl' => '8',
+        'max_leaves_per_month' => '4',
+        'max_wo_per_month' => '4',
     ];
 
     foreach ($defaults as $key => $value) {
