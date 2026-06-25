@@ -6,6 +6,75 @@ function weekoff_roster_adjacent_period($month, $year, $delta_months)
     return [(int) date('n', $ts), (int) date('Y', $ts)];
 }
 
+function is_weekoff_roster_editable_period($year, $month)
+{
+    $period_ts = mktime(0, 0, 0, (int) $month, 1, (int) $year);
+    $current_month_ts = mktime(0, 0, 0, (int) date('n'), 1, (int) date('Y'));
+    return $period_ts >= $current_month_ts;
+}
+
+function is_weekoff_roster_past_period($year, $month)
+{
+    $period_ts = mktime(0, 0, 0, (int) $month, 1, (int) $year);
+    $current_month_ts = mktime(0, 0, 0, (int) date('n'), 1, (int) date('Y'));
+    return $period_ts < $current_month_ts;
+}
+
+function weekoff_roster_week_key($date)
+{
+    return date('o-W', strtotime($date));
+}
+
+function validate_employee_weekoff_dates(array $dates)
+{
+    $unique = [];
+    foreach ($dates as $date) {
+        $date = trim((string) $date);
+        if ($date === '') {
+            continue;
+        }
+        $unique[$date] = true;
+    }
+    $dates = array_keys($unique);
+    sort($dates);
+
+    $weeks = [];
+    foreach ($dates as $date) {
+        $week_key = weekoff_roster_week_key($date);
+        if (isset($weeks[$week_key])) {
+            return [
+                'ok' => false,
+                'message' => 'Only one weekoff day is allowed per calendar week (conflict on ' . date('d M Y', strtotime($date)) . ').',
+            ];
+        }
+        $weeks[$week_key] = $date;
+    }
+
+    return ['ok' => true, 'dates' => $dates];
+}
+
+function dedupe_weekoff_dates_one_per_week(array $dates)
+{
+    sort($dates);
+    $by_week = [];
+    foreach ($dates as $date) {
+        $date = trim((string) $date);
+        if ($date === '') {
+            continue;
+        }
+        $week_key = weekoff_roster_week_key($date);
+        if (!isset($by_week[$week_key])) {
+            $by_week[$week_key] = $date;
+        }
+    }
+    return array_values($by_week);
+}
+
+function enforce_one_weekoff_per_week(array $dates)
+{
+    return dedupe_weekoff_dates_one_per_week($dates);
+}
+
 function get_weekoff_day_credit($settings)
 {
     $v = (float) ($settings['weekoff_day_credit'] ?? 1);
@@ -69,11 +138,11 @@ function save_employee_weekoff_roster($conn, $emp_id, $branch_id, $year, $month,
     foreach ($dates as $date) {
         $date = trim((string) $date);
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) && $date >= $start && $date <= $end) {
-            $valid_dates[$date] = true;
+            $valid_dates[] = $date;
         }
     }
-    $valid_dates = array_keys($valid_dates);
-    sort($valid_dates);
+
+    $valid_dates = dedupe_weekoff_dates_one_per_week($valid_dates);
 
     $old_stmt = $conn->prepare('SELECT off_date FROM employee_weekoff_days WHERE emp_id = ? AND off_date BETWEEN ? AND ?');
     $old_stmt->bind_param('sss', $emp_id, $start, $end);
@@ -98,7 +167,7 @@ function save_employee_weekoff_roster($conn, $emp_id, $branch_id, $year, $month,
 
     sync_weekoff_roster_attendance($conn, $emp_id, $valid_dates, $old_dates);
 
-    return count($valid_dates);
+    return ['saved' => count($valid_dates), 'error' => null];
 }
 
 function sync_weekoff_roster_attendance($conn, $emp_id, array $new_dates, array $old_dates)
@@ -154,7 +223,8 @@ function copy_branch_weekoff_roster($conn, $branch_id, $year, $month)
             }
         }
         if ($new_dates !== []) {
-            $copied += save_employee_weekoff_roster($conn, $emp_id, (int) $emp['branch_id'], $year, $month, $new_dates);
+            $save_result = save_employee_weekoff_roster($conn, $emp_id, (int) $emp['branch_id'], $year, $month, $new_dates);
+            $copied += (int) ($save_result['saved'] ?? 0);
         }
     }
 
@@ -179,8 +249,9 @@ function apply_sunday_weekoffs_for_branch($conn, $branch_id, $year, $month)
     $employees = $emp_stmt->get_result();
     while ($emp = $employees->fetch_assoc()) {
         $existing = get_employee_weekoff_dates($conn, $emp['emp_id'], $year, $month);
-        $merged = array_values(array_unique(array_merge($existing, $sundays)));
-        $total += save_employee_weekoff_roster($conn, $emp['emp_id'], (int) $emp['branch_id'], $year, $month, $merged);
+        $merged = enforce_one_weekoff_per_week(array_values(array_unique(array_merge($existing, $sundays))));
+        $save_result = save_employee_weekoff_roster($conn, $emp['emp_id'], (int) $emp['branch_id'], $year, $month, $merged);
+        $total += (int) ($save_result['saved'] ?? 0);
     }
 
     return $total;

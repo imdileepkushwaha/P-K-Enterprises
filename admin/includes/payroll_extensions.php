@@ -164,13 +164,86 @@ function get_leave_types($conn)
         }
     }
     if ($types === []) {
-        return [
-            'CL' => ['code' => 'CL', 'name' => 'Casual Leave', 'paid_credit' => '1.00'],
-            'SL' => ['code' => 'SL', 'name' => 'Sick Leave', 'paid_credit' => '1.00'],
-            'LOP' => ['code' => 'LOP', 'name' => 'Loss of Pay', 'paid_credit' => '0.00'],
-        ];
+        return get_default_leave_types_catalog();
     }
     return $types;
+}
+
+function get_default_leave_types_catalog()
+{
+    return [
+        'PL' => ['code' => 'PL', 'name' => 'Privilege Leave', 'paid_credit' => '1.00', 'is_active' => '1'],
+        'CL' => ['code' => 'CL', 'name' => 'Casual Leave', 'paid_credit' => '1.00', 'is_active' => '1'],
+        'SL' => ['code' => 'SL', 'name' => 'Sick Leave', 'paid_credit' => '1.00', 'is_active' => '1'],
+        'LOP' => ['code' => 'LOP', 'name' => 'Loss of Pay', 'paid_credit' => '0.00', 'is_active' => '1'],
+    ];
+}
+
+function get_all_leave_types($conn)
+{
+    $types = [];
+    $r = $conn->query('SELECT * FROM leave_types ORDER BY code');
+    if ($r) {
+        while ($row = $r->fetch_assoc()) {
+            $types[$row['code']] = $row;
+        }
+    }
+    return $types;
+}
+
+function format_leave_type_label(array $leave_type)
+{
+    return trim($leave_type['code'] . ' — ' . $leave_type['name']);
+}
+
+function get_leave_quota_setting_key($code)
+{
+    return 'leave_quota_' . strtolower($code);
+}
+
+function get_leave_types_with_yearly_quota($conn, $settings)
+{
+    $types = get_leave_types($conn);
+    $result = [];
+    foreach ($types as $code => $row) {
+        $key = get_leave_quota_setting_key($code);
+        if (array_key_exists($key, $settings)) {
+            $result[$code] = $row;
+        }
+    }
+    return $result;
+}
+
+function leave_type_codes_with_balance($conn, $settings)
+{
+    return array_keys(get_leave_types_with_yearly_quota($conn, $settings));
+}
+
+function save_leave_type($conn, $code, $name, $paid_credit, $is_active = 1)
+{
+    $code = strtoupper(trim($code));
+    $name = trim($name);
+    $paid_credit = max(0, min(1, (float) $paid_credit));
+    $is_active = $is_active ? 1 : 0;
+
+    if ($code === '' || !preg_match('/^[A-Z0-9]{1,10}$/', $code)) {
+        return ['ok' => false, 'message' => 'Leave code must be 1–10 letters or numbers (e.g. PL, CL).'];
+    }
+    if ($name === '') {
+        return ['ok' => false, 'message' => 'Full leave name is required.'];
+    }
+
+    $stmt = $conn->prepare('
+        INSERT INTO leave_types (code, name, paid_credit, is_active)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), paid_credit = VALUES(paid_credit), is_active = VALUES(is_active)
+    ');
+    $stmt->bind_param('ssdi', $code, $name, $paid_credit, $is_active);
+    if (!$stmt->execute()) {
+        return ['ok' => false, 'message' => 'Could not save leave type.'];
+    }
+
+    return ['ok' => true, 'message' => 'Leave type saved.'];
 }
 
 function get_leave_type_credit($conn, $code, $settings)
@@ -251,6 +324,9 @@ function sum_adjustments_by_kind(array $adjustments)
 
 function get_attendance_stats_extended($conn, $emp_id, $year, $month, $settings = [])
 {
+    if ($settings !== []) {
+        migrate_legacy_leave_balances_to_monthly($conn, $settings);
+    }
     if (function_exists('accrue_monthly_leaves')) {
         accrue_monthly_leaves($conn, $settings, $year, $month);
     }
@@ -513,27 +589,72 @@ function send_single_salary_slip($conn, $employee, $year, $month, $settings, $ma
 
 /* ---------- Leave Management ---------- */
 
+function monthly_leave_accrual_from_yearly($yearly_quota)
+{
+    return round((float) $yearly_quota / 12, 2);
+}
+
+function migrate_legacy_leave_balances_to_monthly($conn, $settings)
+{
+    $flag = 'leave_monthly_accrual_migrated';
+    $stmt = $conn->prepare('SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1');
+    $stmt->bind_param('s', $flag);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    if ($row && ($row['setting_value'] ?? '') === '1') {
+        return;
+    }
+
+    $sl_monthly = monthly_leave_accrual_from_yearly($settings['leave_quota_sl'] ?? 9);
+    $cl_monthly = monthly_leave_accrual_from_yearly($settings['leave_quota_cl'] ?? 8);
+    $sl_yearly = (float) ($settings['leave_quota_sl'] ?? 9);
+    $cl_yearly = (float) ($settings['leave_quota_cl'] ?? 8);
+
+    $conn->query("UPDATE employee_leave_balances SET balance = {$sl_monthly} WHERE leave_type = 'SL' AND balance >= {$sl_yearly}");
+    $conn->query("UPDATE employee_leave_balances SET balance = {$cl_monthly} WHERE leave_type = 'CL' AND balance >= {$cl_yearly}");
+
+    $quota_types = get_leave_types_with_yearly_quota($conn, $settings);
+    foreach ($quota_types as $leave_type => $row) {
+        $leave_type_esc = $conn->real_escape_string($leave_type);
+        $monthly = monthly_leave_accrual_from_yearly($settings[get_leave_quota_setting_key($leave_type)] ?? 0);
+        $conn->query("
+            INSERT INTO employee_leave_balances (emp_id, leave_type, balance)
+            SELECT e.emp_id, '{$leave_type_esc}', {$monthly} FROM employees e
+            WHERE e.is_active = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM employee_leave_balances b
+                  WHERE b.emp_id = e.emp_id AND b.leave_type = '{$leave_type_esc}'
+              )
+        ");
+    }
+
+    require_once __DIR__ . '/settings_helper.php';
+    set_setting($conn, $flag, '1');
+}
+
 function get_employee_leave_balances($conn, $emp_id, $settings)
 {
-    $balances = [
-        'PL' => 0.00,
-        'SL' => (float) ($settings['leave_quota_sl'] ?? 9),
-        'CL' => (float) ($settings['leave_quota_cl'] ?? 8),
-    ];
+    migrate_legacy_leave_balances_to_monthly($conn, $settings);
+    accrue_monthly_leaves($conn, $settings, (int) date('Y'), (int) date('n'));
+
+    $quota_codes = leave_type_codes_with_balance($conn, $settings);
+    $balances = array_fill_keys($quota_codes, 0.00);
     $stmt = $conn->prepare("SELECT leave_type, balance FROM employee_leave_balances WHERE emp_id = ?");
     $stmt->bind_param('s', $emp_id);
     $stmt->execute();
     $res = $stmt->get_result();
     $has_db_balance = [];
     while ($row = $res->fetch_assoc()) {
-        $balances[$row['leave_type']] = (float) $row['balance'];
+        if (array_key_exists($row['leave_type'], $balances)) {
+            $balances[$row['leave_type']] = (float) $row['balance'];
+        }
         $has_db_balance[$row['leave_type']] = true;
     }
-    // Initialize SL/CL if not in DB
-    foreach (['SL', 'CL'] as $lt) {
+    foreach ($quota_codes as $lt) {
         if (!isset($has_db_balance[$lt])) {
+            $zero = 0.0;
             $stmt = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
-            $stmt->bind_param('ssd', $emp_id, $lt, $balances[$lt]);
+            $stmt->bind_param('ssd', $emp_id, $lt, $zero);
             $stmt->execute();
         }
     }
@@ -543,22 +664,24 @@ function get_employee_leave_balances($conn, $emp_id, $settings)
 function accrue_monthly_leaves($conn, $settings, $year, $month)
 {
     // Ignore passed year/month. Use current system date.
-    $current_year = (int)date('Y');
-    $current_month = (int)date('n');
+    $current_year = (int) date('Y');
+    $current_month = (int) date('n');
 
     $stmt = $conn->prepare("INSERT IGNORE INTO leave_accruals_log (period_year, period_month) VALUES (?, ?)");
     $stmt->bind_param('ii', $current_year, $current_month);
     $stmt->execute();
-    
-    // If affected_rows > 0, it means we just inserted it for the first time
+
+    // If affected_rows > 0, it means we just inserted it for the first time this month
     if ($stmt->affected_rows > 0) {
-        $pl_yearly = (float) ($settings['leave_quota_pl'] ?? 13);
-        $pl_monthly = round($pl_yearly / 12, 2);
-        
-        $conn->query("
-            INSERT INTO employee_leave_balances (emp_id, leave_type, balance)
-            SELECT emp_id, 'PL', {$pl_monthly} FROM employees WHERE is_active = 1
-            ON DUPLICATE KEY UPDATE balance = balance + {$pl_monthly}
-        ");
+        $quota_types = get_leave_types_with_yearly_quota($conn, $settings);
+        foreach ($quota_types as $leave_type => $row) {
+            $monthly = monthly_leave_accrual_from_yearly($settings[get_leave_quota_setting_key($leave_type)] ?? 0);
+            $leave_type_esc = $conn->real_escape_string($leave_type);
+            $conn->query("
+                INSERT INTO employee_leave_balances (emp_id, leave_type, balance)
+                SELECT emp_id, '{$leave_type_esc}', {$monthly} FROM employees WHERE is_active = 1
+                ON DUPLICATE KEY UPDATE balance = balance + {$monthly}
+            ");
+        }
     }
 }

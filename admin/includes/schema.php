@@ -303,6 +303,7 @@ function migrate_branch_columns($conn)
 function seed_default_leave_types($conn)
 {
     $types = [
+        ['PL', 'Privilege Leave', '1.00'],
         ['CL', 'Casual Leave', '1.00'],
         ['SL', 'Sick Leave', '1.00'],
         ['LOP', 'Loss of Pay', '0.00'],

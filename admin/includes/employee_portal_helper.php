@@ -243,6 +243,56 @@ function leave_request_day_count($from_date, $to_date)
     return count(leave_request_dates_in_range($from_date, $to_date));
 }
 
+function leave_types_with_balance($conn, $settings)
+{
+    return leave_type_codes_with_balance($conn, $settings);
+}
+
+function get_pending_leave_days_by_type($conn, $emp_id, $leave_type)
+{
+    $stmt = $conn->prepare("
+        SELECT from_date, to_date FROM employee_leave_requests
+        WHERE emp_id = ? AND leave_type = ? AND request_status = 'pending'
+    ");
+    $stmt->bind_param('ss', $emp_id, $leave_type);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $days = 0;
+    foreach ($rows as $row) {
+        $days += leave_request_day_count($row['from_date'], $row['to_date']);
+    }
+    return $days;
+}
+
+function employee_leave_balance_available($conn, $emp_id, $leave_type, $settings)
+{
+    if (!in_array($leave_type, leave_types_with_balance($conn, $settings), true)) {
+        return null;
+    }
+    require_once __DIR__ . '/payroll_extensions.php';
+    $balances = get_employee_leave_balances($conn, $emp_id, $settings);
+    $balance = (float) ($balances[$leave_type] ?? 0);
+    $pending = get_pending_leave_days_by_type($conn, $emp_id, $leave_type);
+    return max(0.0, $balance - $pending);
+}
+
+function validate_employee_leave_balance_for_request($conn, $emp_id, $leave_type, $days, $settings)
+{
+    $available = employee_leave_balance_available($conn, $emp_id, $leave_type, $settings);
+    if ($available === null) {
+        return ['ok' => true];
+    }
+    if ((float) $days > $available) {
+        $available_label = rtrim(rtrim(number_format($available, 2, '.', ''), '0'), '.');
+        $day_label = $days === 1 ? '1 day' : $days . ' days';
+        return [
+            'ok' => false,
+            'message' => 'Insufficient ' . $leave_type . ' balance. You have ' . $available_label . ' day(s) available but requested ' . $day_label . '.',
+        ];
+    }
+    return ['ok' => true];
+}
+
 function count_employee_leave_requests_for_month($conn, $emp_id, $year, $month)
 {
     $month_start = sprintf('%d-%02d-01', $year, $month);
@@ -348,6 +398,11 @@ function create_employee_leave_request($conn, $emp_id, $branch_id, $from_date, $
 
     if (leave_request_overlaps_existing($conn, $emp_id, $from_date, $to_date)) {
         return ['ok' => false, 'message' => 'These dates overlap with another pending or approved leave request.'];
+    }
+
+    $balance_check = validate_employee_leave_balance_for_request($conn, $emp_id, $leave_type, $days, $settings);
+    if (!$balance_check['ok']) {
+        return $balance_check;
     }
 
     $stmt = $conn->prepare('
@@ -528,15 +583,11 @@ function approve_attendance_request($conn, $request_id, $reviewer, $note = '')
     $mark->execute();
 
     if ($req['status'] === 'Leave' && !empty($leave_type)) {
-        require_once __DIR__ . '/settings_helper.php';
         $chk = $conn->prepare("SELECT balance FROM employee_leave_balances WHERE emp_id = ? AND leave_type = ?");
         $chk->bind_param('ss', $req['emp_id'], $leave_type);
         $chk->execute();
         if (!$chk->get_result()->fetch_assoc()) {
-            $settings = get_all_settings($conn);
             $default_bal = 0.0;
-            if ($leave_type === 'SL') $default_bal = (float)($settings['leave_quota_sl'] ?? 9);
-            elseif ($leave_type === 'CL') $default_bal = (float)($settings['leave_quota_cl'] ?? 8);
             $ins = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
             $ins->bind_param('ssd', $req['emp_id'], $leave_type, $default_bal);
             $ins->execute();
@@ -646,15 +697,11 @@ function approve_leave_request($conn, $request_id, $reviewer, $note = '')
 
     $days = count($dates);
     if ($days > 0 && !empty($leave_type)) {
-        require_once __DIR__ . '/settings_helper.php';
         $chk = $conn->prepare("SELECT balance FROM employee_leave_balances WHERE emp_id = ? AND leave_type = ?");
         $chk->bind_param('ss', $req['emp_id'], $leave_type);
         $chk->execute();
         if (!$chk->get_result()->fetch_assoc()) {
-            $settings = get_all_settings($conn);
             $default_bal = 0.0;
-            if ($leave_type === 'SL') $default_bal = (float)($settings['leave_quota_sl'] ?? 9);
-            elseif ($leave_type === 'CL') $default_bal = (float)($settings['leave_quota_cl'] ?? 8);
             $ins = $conn->prepare("INSERT IGNORE INTO employee_leave_balances (emp_id, leave_type, balance) VALUES (?, ?, ?)");
             $ins->bind_param('ssd', $req['emp_id'], $leave_type, $default_bal);
             $ins->execute();

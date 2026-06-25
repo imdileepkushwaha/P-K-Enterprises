@@ -136,6 +136,19 @@ if ($section === 'leave') {
     exit;
 }
 
+if ($section === 'leave_type_add' || $section === 'leave_type_save') {
+    require_once 'includes/payroll_extensions.php';
+    $code = strtoupper(trim($_POST['code'] ?? ''));
+    $name = trim($_POST['name'] ?? '');
+    $paid_credit = trim($_POST['paid_credit'] ?? '1');
+    $is_active = !empty($_POST['is_active']) ? 1 : 0;
+    $result = save_leave_type($conn, $code, $name, $paid_credit, $is_active);
+    $_SESSION['flash_message'] = $result['message'];
+    $_SESSION['flash_success'] = $result['ok'];
+    header('Location: settings.php?tab=leave');
+    exit;
+}
+
 if ($section === 'admin_add') {
     if (!is_super_admin()) {
         $_SESSION['flash_message'] = 'Only Head Office can manage administrator accounts.';

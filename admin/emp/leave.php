@@ -13,6 +13,7 @@ $leave_balances = get_employee_leave_balances($conn, $emp_id, $settings);
 
 $period_label = get_period_label($year, $month);
 $leave_types = get_leave_types($conn);
+$quota_leave_types = get_leave_types_with_yearly_quota($conn, $settings);
 $leave_requests = get_employee_leave_requests($conn, $emp_id, 25);
 $month_start = sprintf('%d-%02d-01', $year, $month);
 $month_end = sprintf('%d-%02d-%d', $year, $month, (int) date('t', mktime(0, 0, 0, $month, 1, $year)));
@@ -25,9 +26,21 @@ $requests_remaining = employee_leave_request_remaining($conn, $emp_id, $year, $m
 $requests_used = max(0, $requests_limit - $requests_remaining);
 $leave_form_disabled = $requests_remaining <= 0 || $period_locked;
 $pending_leave = 0;
+$pending_days_by_type = [];
+foreach ($quota_leave_types as $code => $lt) {
+    $pending_days_by_type[$code] = 0;
+}
 foreach ($leave_requests_for_month as $req) {
     if (($req['request_status'] ?? '') === 'pending') {
         $pending_leave++;
+    }
+}
+foreach ($leave_requests as $req) {
+    if (($req['request_status'] ?? '') === 'pending') {
+        $lt = strtoupper(trim($req['leave_type'] ?? ''));
+        if (isset($pending_days_by_type[$lt])) {
+            $pending_days_by_type[$lt] += leave_request_day_count($req['from_date'], $req['to_date']);
+        }
     }
 }
 
@@ -90,20 +103,19 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
             <div class="emp-request-panel-body">
                 <div class="emp-quota-meter" style="margin-bottom: 24px;">
                     <h4 style="margin: 0 0 12px; font-size: 14px;">Leave Balances</h4>
-                    <div style="display: flex; gap: 12px; font-size: 13px;">
-                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">PL</div>
-                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['PL'] ?? '0'); ?></div>
+                    <?php if ($quota_leave_types === []): ?>
+                        <p class="form-hint" style="margin:0;">No balance-tracked leave types configured.</p>
+                    <?php else: ?>
+                    <div style="display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap;">
+                        <?php foreach ($quota_leave_types as $code => $lt): ?>
+                        <div style="flex:1; min-width: 90px; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;" title="<?php echo htmlspecialchars($lt['name']); ?>"><?php echo htmlspecialchars($code); ?></div>
+                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars(rtrim(rtrim(number_format((float) ($leave_balances[$code] ?? 0), 2, '.', ''), '0'), '.')); ?></div>
+                            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;"><?php echo htmlspecialchars($lt['name']); ?></div>
                         </div>
-                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">SL</div>
-                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['SL'] ?? '0'); ?></div>
-                        </div>
-                        <div style="flex:1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                            <div style="color: #64748b; font-weight: 600; margin-bottom: 4px;">CL</div>
-                            <div style="font-size: 16px; font-weight: 700; color: #0f172a;"><?php echo htmlspecialchars($leave_balances['CL'] ?? '0'); ?></div>
-                        </div>
+                        <?php endforeach; ?>
                     </div>
+                    <?php endif; ?>
                 </div>
                 <div class="emp-quota-meter">
                     <div class="emp-quota-meter-top">
@@ -147,9 +159,13 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
                         <div class="form-group">
                             <label for="empLeaveTypePick">Leave type</label>
                             <select name="leave_type" id="empLeaveTypePick" required <?php echo $leave_form_disabled ? 'disabled' : ''; ?>>
-                                <?php foreach ($leave_types as $lt): ?>
-                                    <option value="<?php echo htmlspecialchars($lt['code']); ?>"><?php echo htmlspecialchars($lt['code'] . ' — ' . $lt['name']); ?></option>
-                                <?php endforeach; ?>
+                                <?php if ($leave_types === []): ?>
+                                    <option value="">No leave types configured</option>
+                                <?php else: ?>
+                                    <?php foreach ($leave_types as $lt): ?>
+                                        <option value="<?php echo htmlspecialchars($lt['code']); ?>"><?php echo htmlspecialchars(format_leave_type_label($lt)); ?></option>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
                             </select>
                         </div>
                         <div class="form-group">
@@ -307,6 +323,7 @@ $default_from = $is_current_month ? date('Y-m-d') : $month_start;
     100% { transform: scale(1); opacity: 1; }
 }
 #confirmCancelBtn:hover { background: #dc2626 !important; }
+.form-hint-error { color: #dc2626; }
 </style>
 
 <script>
@@ -329,26 +346,71 @@ document.getElementById('confirmCancelBtn').addEventListener('click', function()
     var from = document.getElementById('empLeaveFrom');
     var to = document.getElementById('empLeaveTo');
     var hint = document.getElementById('empLeaveDayCount');
+    var typePick = document.getElementById('empLeaveTypePick');
+    var submitBtn = document.querySelector('.emp-request-form button[type="submit"]');
+    var leaveBalances = <?php echo json_encode($leave_balances, JSON_UNESCAPED_UNICODE); ?>;
+    var pendingLeaveDays = <?php echo json_encode($pending_days_by_type, JSON_UNESCAPED_UNICODE); ?>;
+    var balanceLeaveTypes = <?php echo json_encode(array_keys($quota_leave_types), JSON_UNESCAPED_UNICODE); ?>;
+    var formDisabled = <?php echo $leave_form_disabled ? 'true' : 'false'; ?>;
     if (!from || !to || !hint) return;
+
+    function formatDays(n) {
+        var s = Number(n).toFixed(2).replace(/\.?0+$/, '');
+        return s + ' day' + (Number(s) === 1 ? '' : 's');
+    }
+
+    function getAvailableBalance(type) {
+        if (balanceLeaveTypes.indexOf(type) === -1) return null;
+        var bal = parseFloat(leaveBalances[type] || 0);
+        var pending = parseFloat(pendingLeaveDays[type] || 0);
+        return Math.max(0, bal - pending);
+    }
+
     function sync() {
+        var canSubmit = !formDisabled;
         if (!from.value || !to.value) {
             hint.textContent = '';
+            hint.className = 'form-hint';
+            if (submitBtn) submitBtn.disabled = !canSubmit;
             return;
         }
         var a = new Date(from.value + 'T00:00:00');
         var b = new Date(to.value + 'T00:00:00');
         if (b < a) {
             hint.textContent = 'To date must be on or after from date.';
+            hint.className = 'form-hint form-hint-error';
+            if (submitBtn) submitBtn.disabled = true;
             return;
         }
         var days = Math.round((b - a) / 86400000) + 1;
-        hint.textContent = days + ' day' + (days === 1 ? '' : 's') + ' selected';
+        var leaveType = typePick ? typePick.value : '';
+        var available = getAvailableBalance(leaveType);
+        if (available !== null) {
+            if (available <= 0) {
+                hint.textContent = 'No ' + leaveType + ' balance available.';
+                hint.className = 'form-hint form-hint-error';
+                canSubmit = false;
+            } else if (days > available) {
+                hint.textContent = days + ' day' + (days === 1 ? '' : 's') + ' selected — only ' + formatDays(available) + ' of ' + leaveType + ' available.';
+                hint.className = 'form-hint form-hint-error';
+                canSubmit = false;
+            } else {
+                hint.textContent = days + ' day' + (days === 1 ? '' : 's') + ' selected (' + formatDays(available) + ' ' + leaveType + ' available).';
+                hint.className = 'form-hint';
+            }
+        } else {
+            hint.textContent = days + ' day' + (days === 1 ? '' : 's') + ' selected';
+            hint.className = 'form-hint';
+        }
+        if (submitBtn) submitBtn.disabled = !canSubmit;
     }
+
     from.addEventListener('change', function () {
         if (!to.value || to.value < from.value) to.value = from.value;
         sync();
     });
     to.addEventListener('change', sync);
+    if (typePick) typePick.addEventListener('change', sync);
     sync();
 })();
 </script>

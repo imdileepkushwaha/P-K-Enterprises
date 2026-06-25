@@ -3,6 +3,7 @@ require 'includes/header.php';
 require 'config.php';
 require 'includes/settings_helper.php';
 require 'includes/signature_helper.php';
+require_once 'includes/payroll_extensions.php';
 
 $settings = get_all_settings($conn);
 $signature_url = payslip_signature_url($settings);
@@ -343,6 +344,7 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
             <?php endif; ?>
 
             <?php if ($tab === 'leave'): ?>
+            <?php $all_leave_types = get_all_leave_types($conn); ?>
             <form method="POST" action="settings_save.php" class="settings-form">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="section" value="leave">
@@ -352,15 +354,17 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                         <div class="form-group">
                             <label>Yearly PL Quota</label>
                             <input type="number" name="leave_quota_pl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_pl'] ?? '13'); ?>">
-                            <span class="form-hint">Accrues 1.08 per month</span>
+                            <span class="form-hint">Accrues <?php echo number_format(round((float)($settings['leave_quota_pl'] ?? 13) / 12, 2), 2); ?> per month</span>
                         </div>
                         <div class="form-group">
                             <label>Yearly SL Quota</label>
                             <input type="number" name="leave_quota_sl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_sl'] ?? '9'); ?>">
+                            <span class="form-hint">Accrues <?php echo number_format(round((float)($settings['leave_quota_sl'] ?? 9) / 12, 2), 2); ?> per month</span>
                         </div>
                         <div class="form-group">
                             <label>Yearly CL Quota</label>
                             <input type="number" name="leave_quota_cl" step="1" min="0" value="<?php echo htmlspecialchars($settings['leave_quota_cl'] ?? '8'); ?>">
+                            <span class="form-hint">Accrues <?php echo number_format(round((float)($settings['leave_quota_cl'] ?? 8) / 12, 2), 2); ?> per month</span>
                         </div>
                     </div>
                     <div class="form-row">
@@ -383,6 +387,80 @@ $active_meta = $tab_meta[$tab] ?? $tab_meta['smtp'];
                     </button>
                 </div>
             </form>
+
+            <div class="settings-form-section" style="margin-top: 32px;">
+                <h4>Leave Types (Employee Portal)</h4>
+                <p class="form-hint" style="margin-bottom: 16px;">Active types appear in the employee leave request form as <strong>CODE — Full Name</strong> (e.g. PL — Privilege Leave).</p>
+                <?php if ($all_leave_types === []): ?>
+                    <p class="form-hint">No leave types yet. Add one below.</p>
+                <?php else: ?>
+                    <div class="table-wrap" style="margin-bottom: 20px;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Code</th>
+                                    <th>Full Name</th>
+                                    <th>Paid Credit</th>
+                                    <th>Status</th>
+                                    <th>Preview</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($all_leave_types as $lt): ?>
+                                    <tr>
+                                        <form method="POST" action="settings_save.php">
+                                            <?php echo csrf_field(); ?>
+                                            <input type="hidden" name="section" value="leave_type_save">
+                                            <input type="hidden" name="code" value="<?php echo htmlspecialchars($lt['code']); ?>">
+                                            <td><strong><?php echo htmlspecialchars($lt['code']); ?></strong></td>
+                                            <td><input type="text" name="name" value="<?php echo htmlspecialchars($lt['name']); ?>" required maxlength="60" style="width:100%;"></td>
+                                            <td><input type="number" name="paid_credit" value="<?php echo htmlspecialchars($lt['paid_credit']); ?>" step="0.01" min="0" max="1" style="width:80px;"></td>
+                                            <td>
+                                                <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                                                    <input type="checkbox" name="is_active" value="1" <?php echo !empty($lt['is_active']) ? 'checked' : ''; ?>>
+                                                    Active
+                                                </label>
+                                            </td>
+                                            <td><?php echo htmlspecialchars(format_leave_type_label($lt)); ?></td>
+                                            <td><button type="submit" class="btn btn-sm">Save</button></td>
+                                        </form>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+
+                <form method="POST" action="settings_save.php" class="settings-form">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="section" value="leave_type_add">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Code</label>
+                            <input type="text" name="code" maxlength="10" pattern="[A-Za-z0-9]+" placeholder="PL" required style="text-transform: uppercase;">
+                            <span class="form-hint">Short code shown to employees</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Full Name</label>
+                            <input type="text" name="name" maxlength="60" placeholder="Privilege Leave" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Paid Credit</label>
+                            <input type="number" name="paid_credit" step="0.01" min="0" max="1" value="1.00">
+                        </div>
+                        <div class="form-group" style="display:flex; align-items:flex-end;">
+                            <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                                <input type="checkbox" name="is_active" value="1" checked>
+                                Active in employee portal
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-form-actions">
+                        <button type="submit" class="btn">Add Leave Type</button>
+                    </div>
+                </form>
+            </div>
             <?php endif; ?>
 
             <?php if ($tab === 'admins' && !is_super_admin()): ?>

@@ -3,6 +3,7 @@ require 'config.php';
 require_once 'includes/session_auth.php';
 require_once 'includes/csrf_helper.php';
 require_once 'includes/settings_helper.php';
+require_once 'includes/weekoff_roster_helper.php';
 
 enforce_admin_session();
 
@@ -22,7 +23,13 @@ $redirect_base = 'weekoff_roster.php?year=' . $year . '&month=' . $month;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf_or_redirect($redirect_base);
-    $action = $_POST['roster_action'] ?? 'save';
+
+    if (!is_weekoff_roster_editable_period($year, $month)) {
+        $_SESSION['flash_message'] = 'Past months are view-only. Weekoff roster can be set for ' . get_period_label((int) date('Y'), (int) date('n')) . ' and upcoming months.';
+        $_SESSION['flash_success'] = false;
+        header('Location: ' . $redirect_base);
+        exit;
+    }
 
     if (is_payroll_period_locked($conn, $year, $month)) {
         $_SESSION['flash_message'] = 'This payroll period is locked. Reopen it before editing weekoff roster.';
@@ -30,6 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: ' . $redirect_base);
         exit;
     }
+
+    $action = $_POST['roster_action'] ?? 'save';
 
     if (SHOW_BRANCH_SELECTOR && get_active_branch_id() === null) {
         $_SESSION['flash_message'] = 'Select a branch from the top bar before saving weekoff roster.';
@@ -66,7 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!is_array($dates)) {
                 $dates = [];
             }
-            $saved_total += save_employee_weekoff_roster($conn, $emp_id, (int) $emp['branch_id'], $year, $month, $dates);
+            $save_result = save_employee_weekoff_roster($conn, $emp_id, (int) $emp['branch_id'], $year, $month, $dates);
+            $saved_total += (int) ($save_result['saved'] ?? 0);
         }
 
         $_SESSION['flash_message'] = 'Weekoff roster saved — ' . $saved_total . ' day(s) across all employees. Attendance synced as Week off.';
@@ -83,6 +93,9 @@ $active_branch_label = get_branch_label($conn, get_active_branch_id());
 $branch_for_roster = get_active_branch_id() ?? 1;
 $period_label = get_period_label($year, $month);
 $period_locked = is_payroll_period_locked($conn, $year, $month);
+$roster_editable = is_weekoff_roster_editable_period($year, $month);
+$roster_read_only = !$roster_editable || $period_locked || get_active_branch_id() === null;
+$current_period_label = get_period_label((int) date('Y'), (int) date('n'));
 $roster_map = get_branch_weekoff_roster_map($conn, $year, $month, $branch_for_roster);
 
 $emp_sql = 'SELECT emp_id, name, designation FROM employees WHERE is_active = 1';
@@ -107,7 +120,7 @@ $employee_rows = [];
 $total_wo_days = 0;
 $employees_with_roster = 0;
 while ($emp = $employees->fetch_assoc()) {
-    $dates = $roster_map[$emp['emp_id']] ?? [];
+    $dates = dedupe_weekoff_dates_one_per_week($roster_map[$emp['emp_id']] ?? []);
     $total_wo_days += count($dates);
     if ($dates !== []) {
         $employees_with_roster++;
@@ -154,6 +167,12 @@ for ($day = 1; $day <= $days_in_month; $day++) {
     <?php if (get_active_branch_id() === null): ?>
         <div class="alert alert-page" style="background:#fff7ed;border-color:#fdba74;color:#9a3412">
             <strong>Select a branch.</strong> Choose <strong>Indra Nagar</strong> or <strong>Alambagh</strong> from the top bar to edit weekoff roster.
+        </div>
+    <?php endif; ?>
+
+    <?php if (!$roster_editable): ?>
+        <div class="alert alert-page" style="background:#eff6ff;border-color:#93c5fd;color:#1e40af">
+            <strong>View only.</strong> Past months cannot be changed. You can set weekoff roster for <?php echo htmlspecialchars($current_period_label); ?> and later months. You are viewing <?php echo htmlspecialchars($period_label); ?>.
         </div>
     <?php endif; ?>
 
@@ -209,24 +228,24 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="year" value="<?php echo $year; ?>">
                     <input type="hidden" name="month" value="<?php echo $month; ?>">
-                    <?php if (get_active_branch_id() === null || $period_locked): ?><fieldset disabled><?php endif; ?>
+                    <?php if ($roster_read_only): ?><fieldset disabled><?php endif; ?>
                     <input type="hidden" name="roster_action" value="copy_prev">
                     <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Copy last month roster (same day numbers) for all employees?');">Copy from last month</button>
-                    <?php if (get_active_branch_id() === null || $period_locked): ?></fieldset><?php endif; ?>
+                    <?php if ($roster_read_only): ?></fieldset><?php endif; ?>
                 </form>
                 <form method="POST" class="stack-form weekoff-roster-actions">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="year" value="<?php echo $year; ?>">
                     <input type="hidden" name="month" value="<?php echo $month; ?>">
-                    <?php if (get_active_branch_id() === null || $period_locked): ?><fieldset disabled><?php endif; ?>
+                    <?php if ($roster_read_only): ?><fieldset disabled><?php endif; ?>
                     <input type="hidden" name="roster_action" value="apply_sundays">
                     <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Add all Sundays as weekoffs for every employee? Existing selections are kept.');">Add all Sundays</button>
-                    <?php if (get_active_branch_id() === null || $period_locked): ?></fieldset><?php endif; ?>
+                    <?php if ($roster_read_only): ?></fieldset><?php endif; ?>
                 </form>
             </div>
             <div class="weekoff-roster-side-card weekoff-roster-tip">
                 <strong>How it works</strong>
-                <p>Click day cells to toggle <span class="att-cal-code att-code-wo inline-code">WO</span>. Save updates payroll paid days and writes <em>Week off</em> in attendance (unless another status exists).</p>
+                <p>Click day cells to toggle <span class="att-cal-code att-code-wo inline-code">WO</span>. Each employee can have <strong>one weekoff per calendar week</strong>. Save updates payroll paid days and writes <em>Week off</em> in attendance (unless another status exists).</p>
                 <p>Excel upload <strong>WO</strong> codes are also saved as Week off.</p>
             </div>
         </aside>
@@ -239,7 +258,7 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                         <span class="holidays-period-label"><?php echo htmlspecialchars($period_label); ?></span>
                         <a href="weekoff_roster.php?year=<?php echo $next_year; ?>&month=<?php echo $next_month; ?>" class="btn btn-sm btn-outline" aria-label="Next month">&rarr;</a>
                     </div>
-                    <?php if (get_active_branch_id() !== null && !$period_locked): ?>
+                    <?php if (!$roster_read_only): ?>
                         <button type="submit" form="weekoffRosterForm" class="btn btn-sm">Save roster</button>
                     <?php endif; ?>
                 </div>
@@ -289,6 +308,7 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                                                 <?php for ($day = 1; $day <= $days_in_month; $day++): ?>
                                                     <?php
                                                     $date_key = sprintf('%d-%02d-%02d', $year, $month, $day);
+                                                    $week_key = weekoff_roster_week_key($date_key);
                                                     $is_on = isset($date_set[$date_key]);
                                                     $is_sun = ($weekday_labels[$day] ?? '') === 'Sun';
                                                     $cell_class = 'wo-day-cell';
@@ -298,13 +318,14 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                                                     if ($is_sun) {
                                                         $cell_class .= ' wo-day-sun';
                                                     }
-                                                    $disabled = get_active_branch_id() === null || $period_locked;
+                                                    $disabled = $roster_read_only;
                                                     ?>
                                                     <td class="<?php echo $cell_class; ?>">
                                                         <button type="button"
                                                             class="wo-day-toggle"
                                                             data-emp="<?php echo htmlspecialchars($emp['emp_id']); ?>"
                                                             data-date="<?php echo htmlspecialchars($date_key); ?>"
+                                                            data-week-key="<?php echo htmlspecialchars($week_key); ?>"
                                                             aria-pressed="<?php echo $is_on ? 'true' : 'false'; ?>"
                                                             title="<?php echo htmlspecialchars($date_key); ?>"
                                                             <?php echo $disabled ? 'disabled' : ''; ?>>WO</button>
@@ -312,6 +333,7 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                                                             class="wo-day-checkbox"
                                                             name="roster[<?php echo htmlspecialchars($emp['emp_id']); ?>][]"
                                                             value="<?php echo htmlspecialchars($date_key); ?>"
+                                                            data-week-key="<?php echo htmlspecialchars($week_key); ?>"
                                                             <?php echo $is_on ? 'checked' : ''; ?>
                                                             hidden>
                                                     </td>
@@ -321,7 +343,7 @@ for ($day = 1; $day <= $days_in_month; $day++) {
                                     </tbody>
                                 </table>
                             </div>
-                            <?php if (get_active_branch_id() !== null && !$period_locked): ?>
+                            <?php if (!$roster_read_only): ?>
                                 <div class="weekoff-roster-form-foot">
                                     <button type="submit" class="btn">Save weekoff roster</button>
                                 </div>
@@ -335,26 +357,73 @@ for ($day = 1; $day <= $days_in_month; $day++) {
 </div>
 <script>
 (function () {
+    function syncCell(cb, on) {
+        var cell = cb.closest('.wo-day-cell');
+        var btn = cell ? cell.querySelector('.wo-day-toggle') : null;
+        cb.checked = on;
+        if (cell) cell.classList.toggle('wo-day-on', on);
+        if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+
     function updateCount(empId) {
         var badges = document.querySelectorAll('[data-emp-count="' + empId + '"]');
         var count = document.querySelectorAll('input.wo-day-checkbox[name="roster[' + empId + '][]"]:checked').length;
         badges.forEach(function (el) { el.textContent = String(count); });
     }
 
+    function clearOtherWeekoffs(empId, weekKeyVal, keepCb) {
+        document.querySelectorAll('input.wo-day-checkbox[name="roster[' + empId + '][]"]:checked').forEach(function (cb) {
+            if (cb === keepCb) return;
+            if (cb.getAttribute('data-week-key') !== weekKeyVal) return;
+            syncCell(cb, false);
+        });
+    }
+
+    function normalizeEmployeeWeekoffs(empId) {
+        var seen = {};
+        var boxes = Array.prototype.slice.call(
+            document.querySelectorAll('input.wo-day-checkbox[name="roster[' + empId + '][]"]:checked')
+        );
+        boxes.sort(function (a, b) { return a.value.localeCompare(b.value); });
+        boxes.forEach(function (cb) {
+            var wk = cb.getAttribute('data-week-key');
+            if (!wk || seen[wk]) {
+                syncCell(cb, false);
+                return;
+            }
+            seen[wk] = true;
+        });
+        updateCount(empId);
+    }
+
+    var empIds = [];
     document.querySelectorAll('.wo-day-toggle').forEach(function (btn) {
+        var empId = btn.getAttribute('data-emp');
+        if (empId && empIds.indexOf(empId) === -1) {
+            empIds.push(empId);
+        }
         btn.addEventListener('click', function () {
             if (btn.disabled) return;
-            var empId = btn.getAttribute('data-emp');
-            var date = btn.getAttribute('data-date');
             var cell = btn.closest('.wo-day-cell');
             var cb = cell.querySelector('input.wo-day-checkbox');
+            var weekKeyVal = cb.getAttribute('data-week-key');
             var on = !cb.checked;
-            cb.checked = on;
-            cell.classList.toggle('wo-day-on', on);
-            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            if (on) {
+                clearOtherWeekoffs(empId, weekKeyVal, cb);
+            }
+            syncCell(cb, on);
             updateCount(empId);
         });
     });
+
+    empIds.forEach(normalizeEmployeeWeekoffs);
+
+    var form = document.getElementById('weekoffRosterForm');
+    if (form) {
+        form.addEventListener('submit', function () {
+            empIds.forEach(normalizeEmployeeWeekoffs);
+        });
+    }
 })();
 </script>
 <?php require 'includes/footer.php'; ?>

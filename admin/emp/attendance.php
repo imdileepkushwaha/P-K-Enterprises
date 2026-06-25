@@ -270,7 +270,7 @@ $period_query = 'year=' . $year . '&month=' . $month;
                             <label for="empLeaveType">Leave type</label>
                             <select name="leave_type" id="empLeaveType" <?php echo $attendance_form_disabled ? 'disabled' : ''; ?>>
                                 <?php foreach ($leave_types as $lt): ?>
-                                    <option value="<?php echo htmlspecialchars($lt['code']); ?>"><?php echo htmlspecialchars($lt['code'] . ' — ' . $lt['name']); ?></option>
+                                    <option value="<?php echo htmlspecialchars($lt['code']); ?>"><?php echo htmlspecialchars(format_leave_type_label($lt)); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
