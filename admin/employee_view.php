@@ -4,6 +4,7 @@ require 'config.php';
 require 'includes/settings_helper.php';
 require_once 'includes/salary_helper.php';
 require 'includes/employee_helper.php';
+require_once 'includes/employee_portal_helper.php';
 require_once 'includes/attendance_helper.php';
 
 $emp_id = trim($_GET['emp_id'] ?? '');
@@ -70,6 +71,9 @@ $dept = $employee['department'] ?: 'General';
 $designation = $employee['designation'] ?: 'Staff';
 $joined_date_value = normalize_joined_date_for_input($employee['joined_date'] ?? null);
 $joined_date_display = format_joined_date_display($employee['joined_date'] ?? null);
+$portal_password_set = employee_portal_password_is_set($conn, $emp_id);
+$default_portal_password = trim($settings['default_employee_portal_password'] ?? '') ?: 'Emp@123';
+$portal_login_url = 'emp/login.php';
 ?>
 <div class="employee-view-page">
     <div class="page-header page-header-profile">
@@ -118,6 +122,10 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
                     <button type="button" class="btn btn-action-edit" onclick="document.getElementById('editEmployeeModal').showModal()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         Edit profile
+                    </button>
+                    <button type="button" class="btn btn-action-back" id="openPortalPasswordModalBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Portal password
                     </button>
                     <a href="employees.php" class="btn btn-action-back">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
@@ -195,6 +203,33 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
 
     <div class="ev-layout">
         <aside class="ev-sidebar">
+            <div class="ev-info-card ev-portal-access-card">
+                <h4 class="ev-info-card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Employee portal
+                </h4>
+                <ul class="ev-info-list">
+                    <li>
+                        <span class="ev-info-label">Login ID</span>
+                        <span class="ev-info-value"><code><?php echo htmlspecialchars($employee['emp_id']); ?></code></span>
+                    </li>
+                    <li>
+                        <span class="ev-info-label">Password</span>
+                        <span class="ev-info-value">
+                            <span class="ev-portal-pw-badge <?php echo $portal_password_set ? 'is-set' : 'is-missing'; ?>">
+                                <?php echo $portal_password_set ? 'Configured' : 'Not set'; ?>
+                            </span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="ev-info-label">Portal URL</span>
+                        <span class="ev-info-value"><a href="<?php echo htmlspecialchars($portal_login_url); ?>" target="_blank" rel="noopener">Open login page</a></span>
+                    </li>
+                </ul>
+                <div class="ev-portal-access-actions">
+                    <button type="button" class="btn btn-sm btn-block" id="openPortalPasswordSidebarBtn">Change portal password</button>
+                </div>
+            </div>
             <div class="ev-info-card">
                 <h4 class="ev-info-card-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
@@ -751,6 +786,49 @@ $joined_date_display = format_joined_date_display($employee['joined_date'] ?? nu
     </form>
 </dialog>
 
+<dialog class="modal modal-password" id="portalPasswordModal">
+    <form method="POST" action="employee_portal_password_save.php" class="modal-form" id="portalPasswordForm">
+        <?php echo csrf_field(); ?>
+        <input type="hidden" name="emp_id" value="<?php echo htmlspecialchars($employee['emp_id']); ?>">
+        <input type="hidden" name="redirect" value="<?php echo htmlspecialchars($view_redirect); ?>">
+        <div class="modal-head modal-head-password">
+            <div class="modal-head-content">
+                <div class="modal-head-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </div>
+                <div>
+                    <h3>Employee portal password</h3>
+                    <p>Set a new login password for <?php echo htmlspecialchars($employee['name']); ?> (<?php echo htmlspecialchars($employee['emp_id']); ?>).</p>
+                </div>
+            </div>
+            <button type="button" class="modal-close" aria-label="Close" id="closePortalPasswordModalBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="ev-portal-modal-note">
+                <p>Employee signs in at <strong>Employee portal</strong> using their <strong>Employee ID</strong> and this password. Current password is not required for admin reset.</p>
+            </div>
+            <div class="form-group">
+                <label for="adminNewPortalPassword">New password</label>
+                <input type="password" id="adminNewPortalPassword" name="new_password" required minlength="6" autocomplete="new-password" placeholder="Min 6 characters">
+            </div>
+            <div class="form-group">
+                <label for="adminConfirmPortalPassword">Confirm new password</label>
+                <input type="password" id="adminConfirmPortalPassword" name="confirm_password" required minlength="6" autocomplete="new-password">
+                <span class="form-hint" id="adminPortalPasswordMatchHint" hidden>Passwords do not match.</span>
+            </div>
+        </div>
+        <div class="modal-foot modal-foot-split">
+            <button type="submit" class="btn btn-outline btn-reset-default" name="action" value="reset_default" formnovalidate onclick="return confirm('Reset portal password to default (<?php echo htmlspecialchars($default_portal_password, ENT_QUOTES); ?>) for this employee?');">Reset to default</button>
+            <div class="modal-foot-actions">
+                <button type="button" class="btn btn-outline" id="cancelPortalPasswordModalBtn">Cancel</button>
+                <button type="submit" class="btn" id="adminPortalPasswordSubmit" name="action" value="set">Save password</button>
+            </div>
+        </div>
+    </form>
+</dialog>
+
 <script>
 function confirmToggleStatus(name, isActive) {
     if (isActive) {
@@ -763,6 +841,63 @@ document.addEventListener('DOMContentLoaded', function () {
     var modal = document.getElementById('editEmployeeModal');
     if (modal && modal.parentElement !== document.body) {
         document.body.appendChild(modal);
+    }
+
+    var portalModal = document.getElementById('portalPasswordModal');
+    if (portalModal && portalModal.parentElement !== document.body) {
+        document.body.appendChild(portalModal);
+    }
+
+    var openPortalBtns = [
+        document.getElementById('openPortalPasswordModalBtn'),
+        document.getElementById('openPortalPasswordSidebarBtn')
+    ];
+    var closePortalBtn = document.getElementById('closePortalPasswordModalBtn');
+    var cancelPortalBtn = document.getElementById('cancelPortalPasswordModalBtn');
+    var portalForm = document.getElementById('portalPasswordForm');
+    var newPortalPw = document.getElementById('adminNewPortalPassword');
+    var confirmPortalPw = document.getElementById('adminConfirmPortalPassword');
+    var portalHint = document.getElementById('adminPortalPasswordMatchHint');
+    var portalSubmit = document.getElementById('adminPortalPasswordSubmit');
+
+    function openPortalModal() {
+        if (portalModal) portalModal.showModal();
+    }
+    function closePortalModal() {
+        if (portalModal) portalModal.close();
+    }
+
+    openPortalBtns.forEach(function (btn) {
+        if (btn) btn.addEventListener('click', openPortalModal);
+    });
+    if (closePortalBtn) closePortalBtn.addEventListener('click', closePortalModal);
+    if (cancelPortalBtn) cancelPortalBtn.addEventListener('click', closePortalModal);
+
+    if (new URLSearchParams(location.search).get('open_portal_password') === '1') {
+        openPortalModal();
+        var cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('open_portal_password');
+        history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search);
+    }
+
+    if (portalForm && newPortalPw && confirmPortalPw && portalSubmit) {
+        function syncPortalPasswordHint() {
+            var mismatch = confirmPortalPw.value !== '' && newPortalPw.value !== confirmPortalPw.value;
+            if (portalHint) portalHint.hidden = !mismatch;
+            portalSubmit.disabled = mismatch;
+        }
+        newPortalPw.addEventListener('input', syncPortalPasswordHint);
+        confirmPortalPw.addEventListener('input', syncPortalPasswordHint);
+        portalForm.addEventListener('submit', function (e) {
+            var submitter = e.submitter;
+            if (submitter && submitter.name === 'action' && submitter.value === 'reset_default') {
+                return;
+            }
+            if (newPortalPw.value !== confirmPortalPw.value) {
+                e.preventDefault();
+                if (portalHint) portalHint.hidden = false;
+            }
+        });
     }
 });
 </script>

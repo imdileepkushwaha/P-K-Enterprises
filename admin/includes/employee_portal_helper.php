@@ -73,6 +73,47 @@ function change_employee_portal_password($conn, $emp_id, $current_password, $new
     return ['ok' => true, 'message' => 'Portal password updated successfully. Use your new password next time you sign in.'];
 }
 
+function employee_portal_password_is_set($conn, $emp_id)
+{
+    $hash = get_employee_portal_password_hash($conn, $emp_id);
+    return $hash !== null && $hash !== '';
+}
+
+function admin_set_employee_portal_password($conn, $emp_id, $new_password, $confirm_password)
+{
+    $new_password = (string) $new_password;
+    $confirm_password = (string) $confirm_password;
+
+    if (strlen($new_password) < 6) {
+        return ['ok' => false, 'message' => 'Password must be at least 6 characters.'];
+    }
+    if ($new_password !== $confirm_password) {
+        return ['ok' => false, 'message' => 'New password and confirmation do not match.'];
+    }
+
+    set_employee_portal_password($conn, $emp_id, $new_password);
+
+    return ['ok' => true, 'message' => 'Employee portal password updated. They can sign in with the new password immediately.'];
+}
+
+function admin_reset_employee_portal_password_to_default($conn, $emp_id, array $settings = [])
+{
+    $default = trim((string) ($settings['default_employee_portal_password'] ?? ''));
+    if ($default === '') {
+        $default = 'Emp@123';
+    }
+    if (strlen($default) < 6) {
+        return ['ok' => false, 'message' => 'Default employee portal password in Settings must be at least 6 characters.'];
+    }
+
+    set_employee_portal_password($conn, $emp_id, $default);
+
+    return [
+        'ok' => true,
+        'message' => 'Portal password reset to default: ' . $default,
+    ];
+}
+
 function employee_has_pending_profile_request($conn, $emp_id)
 {
     $stmt = $conn->prepare("SELECT id FROM employee_profile_requests WHERE emp_id = ? AND request_status = 'pending' LIMIT 1");
