@@ -216,8 +216,9 @@ if (isset($_SESSION['upload_message'])) {
             <p class="guide-intro">Supports two Excel layouts for the month you select:</p>
             <p class="guide-intro"><strong>A) Monthly grid</strong> (like Attendance_Payroll_Demo.xlsx)</p>
             <ol class="guide-steps">
-                <li>Row 1: <strong>Emp ID</strong>, <strong>Name</strong>, days <strong>1–31</strong>, then totals</li>
-                <li>Each row: status per day — <strong>P</strong> Present, <strong>A</strong> Absent, <strong>HD</strong> Half day, <strong>L</strong> Leave, <strong>WO</strong> week off</li>
+                <li>Row 1: <strong>Emp ID</strong> (or Sr.No), <strong>Name</strong>, days <strong>1–31</strong> or full dates (e.g. 2026-06-01), then totals</li>
+                <li>Each row: status per day — <strong>P</strong> Present, <strong>A</strong> Absent, <strong>HD</strong> Half day, <strong>L / CL / PL / SL</strong> Leave, <strong>WO</strong> week off</li>
+                <li>If Emp ID is missing, matching uses employee <strong>Name</strong></li>
                 <li><strong>Holidays</strong>, <strong>weekoff roster</strong> days, and <strong>approved leave</strong> are not overwritten by P/A/HD — use <strong>WO</strong> or <strong>L</strong> in Excel to change those days</li>
             </ol>
             <p class="guide-intro"><strong>B) Simple list</strong></p>

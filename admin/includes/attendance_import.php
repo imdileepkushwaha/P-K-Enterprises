@@ -26,11 +26,16 @@ function normalize_attendance_date($value)
 function map_attendance_status_from_code($code)
 {
     $c = strtoupper(trim((string) $code));
-    if ($c === '' ) {
+    if ($c === '') {
         return null;
     }
     if (in_array($c, ['WO', 'W/O', 'WEEK OFF', 'WEEKOFF', 'OFF'], true)) {
         return 'Week off';
+    }
+
+    // Leave type short codes from biometric / payroll sheets (CL, PL, SL, etc.)
+    if (in_array($c, ['CL', 'PL', 'SL', 'EL', 'ML', 'CO', 'COFF', 'LWP', 'UL'], true)) {
+        return 'Leave';
     }
 
     return match ($c) {
@@ -40,6 +45,46 @@ function map_attendance_status_from_code($code)
         'L', 'LEAVE' => 'Leave',
         default => null,
     };
+}
+
+function attendance_import_leave_type_from_code($code): ?string
+{
+    $c = strtoupper(trim((string) $code));
+    if (in_array($c, ['CL', 'PL', 'SL', 'EL', 'ML', 'CO', 'COFF', 'LWP', 'UL'], true)) {
+        return $c;
+    }
+    return null;
+}
+
+/**
+ * Parse a wide-sheet header cell into day-of-month (1–31).
+ * Supports plain days (1), Excel dates (2026-06-01), and Excel serials.
+ */
+function parse_wide_sheet_day_label($label): ?int
+{
+    $label = trim((string) $label);
+    if ($label === '') {
+        return null;
+    }
+
+    if (preg_match('/^\d{1,2}$/', $label)) {
+        $day = (int) $label;
+        return ($day >= 1 && $day <= 31) ? $day : null;
+    }
+
+    if (is_numeric($label) && (float) $label > 59) {
+        $unix = (int) round(((float) $label - 25569) * 86400);
+        $day = (int) gmdate('j', $unix);
+        return ($day >= 1 && $day <= 31) ? $day : null;
+    }
+
+    $normalized = normalize_attendance_date($label);
+    if ($normalized !== null) {
+        $day = (int) date('j', strtotime($normalized));
+        return ($day >= 1 && $day <= 31) ? $day : null;
+    }
+
+    return null;
 }
 
 function attendance_import_holiday_dates_for_period($conn, int $year, int $month, int $branch_id): array
@@ -138,13 +183,10 @@ function count_wide_sheet_day_columns(array $header)
     $day_cols = [];
     $started = false;
     for ($c = 0, $cMax = count($header); $c < $cMax; $c++) {
-        $label = trim((string) ($header[$c] ?? ''));
-        if (preg_match('/^\d{1,2}$/', $label)) {
-            $day = (int) $label;
-            if ($day >= 1 && $day <= 31) {
-                $day_cols[$c] = $day;
-                $started = true;
-            }
+        $day = parse_wide_sheet_day_label($header[$c] ?? '');
+        if ($day !== null) {
+            $day_cols[$c] = $day;
+            $started = true;
         } elseif ($started) {
             break;
         }
@@ -191,11 +233,27 @@ function is_wide_attendance_sheet(array $rows)
     return find_wide_sheet_layout($rows) !== null;
 }
 
-function resolve_emp_id_from_wide_row(array $data, array $layout)
+function resolve_emp_id_from_wide_row(array $data, array $layout, $conn = null, $branch_id = null)
 {
     $name = trim((string) ($data[$layout['name_col']] ?? ''));
     if ($name === '' || preg_match('/^(total|grand total|summary)$/i', $name)) {
         return ['emp_id' => '', 'name' => ''];
+    }
+
+    // Prefer existing employee matched by name (biometric sheets often use Sr.No, not Emp ID).
+    if ($conn) {
+        if ($branch_id !== null) {
+            $stmt = $conn->prepare('SELECT emp_id FROM employees WHERE LOWER(TRIM(name)) = LOWER(?) AND branch_id = ? LIMIT 1');
+            $stmt->bind_param('si', $name, $branch_id);
+        } else {
+            $stmt = $conn->prepare('SELECT emp_id FROM employees WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1');
+            $stmt->bind_param('s', $name);
+        }
+        $stmt->execute();
+        $existing = $stmt->get_result()->fetch_assoc();
+        if ($existing && !empty($existing['emp_id'])) {
+            return ['emp_id' => $existing['emp_id'], 'name' => $name];
+        }
     }
 
     $emp_id = '';
@@ -373,7 +431,8 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
     if (!$dry_run && $conn) {
         $stmt_emp = $conn->prepare('INSERT IGNORE INTO employees (emp_id, branch_id, name) VALUES (?, ?, ?)');
         $stmt_att = $conn->prepare(
-            'INSERT INTO attendance (emp_id, attendance_date, status) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status=?'
+            'INSERT INTO attendance (emp_id, attendance_date, status, leave_type) VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE status=VALUES(status), leave_type=VALUES(leave_type)'
         );
     }
 
@@ -388,7 +447,7 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
             continue;
         }
 
-        $resolved = resolve_emp_id_from_wide_row($data, $layout);
+        $resolved = resolve_emp_id_from_wide_row($data, $layout, $conn, $branch_id);
         $emp_id = $resolved['emp_id'];
         $name = $resolved['name'];
         if ($emp_id === '' || $name === '') {
@@ -422,6 +481,7 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
                 continue;
             }
 
+            $leave_type = ($status === 'Leave') ? attendance_import_leave_type_from_code($code) : null;
             $date = sprintf('%d-%02d-%02d', $year, $month, $day);
             $row_count++;
 
@@ -435,7 +495,7 @@ function process_wide_attendance_rows($conn, array $rows, $year, $month, $dry_ru
                 $employee_ids[$emp_id] = true;
                 attendance_import_preview_push($preview_items, $preview_limit, $emp_id, $name, $date, $status, $code);
             } else {
-                $stmt_att->bind_param('ssss', $emp_id, $date, $status, $status);
+                $stmt_att->bind_param('ssss', $emp_id, $date, $status, $leave_type);
                 if ($stmt_att->execute()) {
                     $success_count++;
                     $ctx['attendance'][$date] = $status;
@@ -647,9 +707,9 @@ function read_attendance_file_rows($tmp_path, $extension)
     if ($extension === 'xls') {
         require_once __DIR__ . '/../lib/SimpleXLS.php';
 
-        $xls = SimpleXLS::parse($tmp_path);
+        $xls = \Shuchkin\SimpleXLS::parse($tmp_path);
         if (!$xls) {
-            return ['error' => 'Could not read the Excel file: ' . SimpleXLS::parseError()];
+            return ['error' => 'Could not read the Excel file: ' . \Shuchkin\SimpleXLS::parseError()];
         }
 
         return ['rows' => $xls->rows()];
